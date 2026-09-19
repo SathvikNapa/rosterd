@@ -2,24 +2,29 @@
 per rosterd-param-ingestion.md / team-brief.md), plus a small in-process
 index the rest of the kernel queries.
 
-A note on drift: as of this writing, the `ingestion.py` actually committed in
-`rosterd-ingestion/` predates the finalized brief -- its `AgentManifestEntry`
-carries a free-form `AgentConstraints` blob and no `scaling` field at all,
-and there is no `POST /manifest/{id}/confirm` endpoint yet. This file
-implements the *finalized* brief shape (`constraints: list[ConstraintRule]`,
-`scaling: ScalingPolicy`, `status: ManifestStatus`), which is what kernel.py's
-own contract and Param's own brief both describe. `manifest_source.py`
-validates whatever ingestion actually returns against this shape and fails
-loudly (not silently) if the two have not converged yet -- see its docstring
-and the README's "Notes for the team" section.
+A note on drift, confirmed by actually running ingestion (not just reading
+its code): its `POST /manifest/{id}/confirm` and `status: draft|confirmed`
+now exist (manifest_source.py's ManifestSubscription enforces that trust
+boundary), but `AgentManifestEntry.constraints` is still a free-form
+`AgentConstraints` blob (`{max_refund_usd, requires_prior_node, ...}`), not
+this file's `list[ConstraintRule]`, and there's still no `scaling` field at
+all. This file implements the *finalized* brief shape, which is what
+kernel.py's own contract and Param's own brief both describe.
+`AgentManifestEntry`'s `constraints` validator below (see
+legacy_constraints.py) adapts ingestion's real dict shape into
+`ConstraintRule`s for the *known* legacy keys it can honestly translate; an
+unrecognized dict key is skipped, not guessed at. See the README's "Notes
+for the team" section for why this is a stopgap, not a fix to ingestion.
 """
 from __future__ import annotations
 
 import threading
 from enum import Enum
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
+
+from legacy_constraints import adapt_legacy_constraints, is_legacy_shape
 
 from shared import GraphSpec
 
@@ -69,6 +74,17 @@ class AgentManifestEntry(BaseModel):
     entry_only_via: list[str] = []
     constraints: list[ConstraintRule] = []
     scaling: ScalingPolicy = ScalingPolicy()
+
+    @field_validator("constraints", mode="before")
+    @classmethod
+    def _adapt_legacy_constraints(cls, value: Any) -> Any:
+        """Ingestion's real `constraints` is currently a dict (see the
+        module docstring); a finalized-brief document already sends a
+        list. Only the dict case is translated -- once ingestion moves to
+        `list[ConstraintRule]` this validator simply never fires."""
+        if is_legacy_shape(value):
+            return adapt_legacy_constraints(value)
+        return value
 
 
 class ManifestDocument(BaseModel):

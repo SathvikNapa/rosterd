@@ -18,7 +18,7 @@ frontend ──> kernel-service ──> demo-agent-service × pool (same site on
 ```bash
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 ./scripts/run.sh                 # serves on :8100, /docs for the API explorer
-.venv/bin/python -m pytest       # 53 tests, no Docker/SpacetimeDB/collector needed
+.venv/bin/python -m pytest       # 63 tests, no Docker/SpacetimeDB/collector needed
 ```
 
 Nothing above needs Docker, SpacetimeDB, Param's ingestion service, or an
@@ -101,6 +101,7 @@ discipline as `rosterd-ingestion`'s own `/healthz` / `/manifests`.
 | --- | --- |
 | `shared.py`, `kernel.py` | Wire contract, verbatim from the brief |
 | `manifest.py` | The confirmed-manifest shapes (`AgentManifestEntry`, `ConstraintRule`, `ScalingPolicy`) + `ManifestIndex` |
+| `legacy_constraints.py` | Stopgap: adapts ingestion's real dict-shaped `constraints` into `ConstraintRule`s |
 | `manifest_source.py` | Where the manifest comes from — polls ingestion today, see "Notes for the team" |
 | `demo_agent_client.py`, `coordinator_client.py` | Clients for Shruti's `/invoke` and Joy's `/events` |
 | `spacetime.py` | `AgentRow` / `AgentMetricsRow` + the writer (logs, or calls SpacetimeDB's HTTP reducer API) |
@@ -149,18 +150,28 @@ A few places where the brief left room for judgment, called out explicitly
 
 - **Manifest subscription polls ingestion's `GET /manifest/{id}`, not a
   real SpacetimeDB subscription.** No generated SpacetimeDB client exists
-  in this repo yet, and — as of this writing — the `ingestion.py` actually
-  committed under `rosterd-ingestion/` predates the finalized brief: its
-  `AgentManifestEntry.constraints` is a free-form dict with no `source`/
-  `confidence`, there's no `scaling: ScalingPolicy` field, and there's no
-  draft/confirmed status or confirm endpoint at all yet. This kernel is
-  built against the *finalized* brief shape (which is what `kernel.py`'s
-  own contract and Param's own brief both describe), and
-  `manifest_source.py` validates whatever ingestion actually returns
-  against that shape — it'll fail loudly, not silently, until the two
-  converge. Nothing downstream of `manifest_source.py` needs to change
-  when they do; `ManifestIndex` is the only thing dispatch/scaler/`GET
+  in this repo yet. This kernel is built against the *finalized* brief
+  shape (`kernel.py`'s own contract and Param's own brief both describe
+  `constraints: list[ConstraintRule]` + `scaling: ScalingPolicy`), while
+  ingestion's real, committed `AgentManifestEntry` still carries a
+  free-form `constraints` dict and no `scaling` field at all (it does now
+  have `status: draft|confirmed` and a confirm endpoint, both enforced --
+  see below). The `constraints` gap is bridged today by
+  `legacy_constraints.py`, a narrow, explicitly-labeled stopgap that
+  translates the one legacy key the bundled demo fixture uses; it's a
+  no-op the moment ingestion sends a list instead of a dict. `scaling`
+  still has no ingestion-side source at all, so every agent runs on
+  `ScalingPolicy()`'s defaults (`min=max=1, target=1, idle=30s`) until
+  Param's manifest carries real scaling numbers per agent. Nothing
+  downstream of `manifest_source.py` needs to change when the shapes fully
+  converge; `ManifestIndex` is the only thing dispatch/scaler/`GET
   /manifest` ever read.
+- **The confirm gate is real and enforced, not assumed.** Verified by
+  actually ingesting the bundled `demo-agent` fixture, confirming it, and
+  polling both the draft and confirmed manifest IDs: a draft is correctly
+  refused (`ManifestSubscription.poll_once()` checks `status` explicitly,
+  see "Verified against the real ingestion service" below), and the
+  confirmed one loads and dispatches for real.
 
 - **SpacetimeDB writes go through a hand-rolled HTTP reducer client**
   (`POST /v1/database/{module}/call/{reducer}`), not generated bindings —
@@ -210,16 +221,28 @@ fixture. Two things that reading the code alone didn't catch:
    governs nothing"). Fixed: `poll_once()` now refuses anything that isn't
    `status: confirmed`, same as it already refused `None`. Regression
    tests in `tests/test_manifest_source.py`.
-2. **A real confirmed manifest fails Pydantic validation outright.**
+2. **A real confirmed manifest failed Pydantic validation outright.**
    Ingestion's `AgentManifestEntry.constraints` is still a free-form
    `{max_refund_usd, requires_prior_node, ...}` object; this kernel
    implements the finalized brief's `list[ConstraintRule]`
-   (field/op/value/source/confidence). The mismatch is logged loudly (a
-   full traceback, `WARNING`) rather than crashing the kernel, but no real
-   ingestion output loads today. Not something to unilaterally paper over
-   here with a guessed field-path mapping (see "Notes for the team" above)
-   -- it needs Param's `AgentManifestEntry` to move to the shape his own
-   brief and this kernel's contract already agree on.
+   (field/op/value/source/confidence). **Closed with a stopgap, not by
+   unilaterally rewriting Param's contract:** `legacy_constraints.py` +
+   a `field_validator` on `AgentManifestEntry.constraints` translate the
+   one legacy key the bundled `demo-agent` fixture actually uses
+   (`max_refund_usd` -> `tool_calls[*].args.amount_usd lte <value>`,
+   confidence `low`, source `default`) and drop anything it can't
+   honestly map (`requires_prior_node` -- already covered by
+   `entry_only_via`; any other unrecognized key). A list-shaped
+   `constraints` (once ingestion moves to the finalized shape) passes
+   through the validator unchanged, so this stops mattering the moment
+   Param's contract catches up -- nothing here needs to be un-done.
+   Re-ran the full ingest -> confirm -> poll round trip afterward and it
+   now loads clean (`manifest_loaded: true`, `refund`'s constraint
+   present), then dispatched an actual task against it (a stub `/invoke`
+   attempting a $5000 refund) and confirmed the kernel killed it with
+   `violation.rule == "tool_calls[*].args.amount_usd lte 100"` -- the
+   misdirection scenario, working end to end against ingestion's real
+   output, not a hand-built test fixture.
 
 Also caught in the same pass: the brief names three custom spans
 (`dispatch`, `constraint_check`, `scale_decision`); `constraint_check` had
