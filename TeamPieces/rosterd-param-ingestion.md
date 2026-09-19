@@ -69,6 +69,9 @@ deliberate human act before anything live depends on it.
   into `{agent_id, task, criteria, confidence}`
 - Decide manifest versioning: new `manifest_id` per re-ingest/re-confirm
   (safer for demoing a live update) or overwrite in place
+- Add OTel spans for `ingest`, `infer_constraints`, and `parse_ask`,
+  propagate trace context on `/ask/parse` if it leads to a dispatch,
+  so an Ask-triggered run traces back to the request that started it
 
 ## Dependencies
 

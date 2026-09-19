@@ -51,6 +51,10 @@ answers.
   that's the point being demonstrated
 - Dockerfile for this service, isolated on its own site network per
   the compose file (only the kernel can reach you)
+- Add OTel auto-instrumentation to `/invoke`, propagate the incoming
+  `traceparent` header so your span nests correctly under the
+  kernel's dispatch trace, this is what makes the misdirection demo's
+  Jaeger trace show the full path, not just the kernel's half of it
 
 ## Dependencies
 
