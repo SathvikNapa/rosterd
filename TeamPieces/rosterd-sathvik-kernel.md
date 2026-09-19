@@ -2,11 +2,10 @@
 
 ## High-level idea (context)
 
-rosterd takes an existing LangGraph agent system (a repo plus
-`constraints.yaml`) and makes it safe to run, schedulable, and
-federatable. Discovery turns the repo into a manifest, the kernel
-enforces that manifest at runtime, the frontend schedules work
-against it, and a coordinator federates results across sites.
+rosterd takes an existing LangGraph agent system and makes it safe to
+run, schedulable in plain language, and federatable, without a manual
+config file. Discovery reads the repo directly, a human confirms what
+was inferred, the kernel enforces the confirmed contract at runtime.
 
 ## Your role
 
@@ -17,148 +16,98 @@ than a single fixed instance. It is the only thing that can reach
 those containers, and the only thing allowed to leave the site's
 network, toward the coordinator.
 
-This is the hardest and highest-stakes piece: the demo's core payoff
-moments (the kernel catches a violation and kills it, the kernel
-scales a pool up and back down under load) both live here, not in the
-roster UI or the calendar. Three things need a real design, not a
-shortcut:
+One change from before: you subscribe only to **confirmed**
+manifests. A `draft` manifest (fresh out of ingestion, not yet
+reviewed by a human) is invisible to you, it governs nothing until
+someone confirms it.
 
-1. Checking arbitrary agent output against a declared rule, without
-   hardcoding field names per agent
-2. A kill that's actually a kill, not a cooperative shutdown the
-   agent could ignore or outrun
-3. Managing a pool of instances per agent instead of one fixed
-   container, so the same kill mechanism doubles as the scale-down
-   mechanism
-
-State for this service is in-memory (plain dicts keyed by `run_id`
-and `agent_id`), no external DB needed for the hackathon.
+State for this service is in-memory (dicts keyed by `run_id` and
+`agent_id`) except for pool state, which you write to SpacetimeDB on
+every change so the pod count is live everywhere, not just something
+you know internally.
 
 ```
 frontend ──> kernel-service ──> demo-agent-service × pool (same site only)
                   │
-                  └──> coordinator-service (posts events, receives policy updates)
+                  ├──> coordinator-service (posts events, receives policy updates)
+                  └──> SpacetimeDB (writes agent pool rows on every scale event)
 ```
 
 ## Design: constraint evaluation
 
-Don't hardcode `refund_amount <= max_refund_usd` as a special case.
-Instead, `constraints.yaml` declares rules generically, and the
-kernel runs a small generic evaluator against whatever the demo
-agent's response contains:
+Rules are generic (`field`, `op`, `value`), each carrying a `source`
+(`schema` / `code` / `interrupt` / `default`) and `confidence` for
+display purposes, the kernel's enforcement logic doesn't care which
+source a rule came from, it evaluates all of them the same way. One
+function, `evaluate_rule(rule, response) -> Violation | None`, pure
+and unit-testable against fixture responses.
 
-```yaml
-constraints:
-  refund_node:
-    rules:
-      - field: tool_calls[0].args.amount
-        op: lte
-        value: 100
-```
-
-- `field` is a dot/bracket path into the `InvokeResponse` (walk
-  `tool_calls`, `output`, or `next_node` as needed)
-- `op` is one of a small fixed set: `lte`, `gte`, `eq`, `in`,
-  `not_in`
-- `value` is the threshold from the manifest
-
-Write one function, `evaluate_rule(rule, response) -> Violation | None`,
-that extracts the field by path and applies the op. This is the only
-piece of "judgment" in the kernel, and it should be a pure function
-you can unit test against fixture responses before wiring it to a
-live agent call, since it's the thing the whole demo depends on being
-correct.
+E-commerce example: `issue_refund`'s schema-inferred rule is
+`tool_calls[0].args.amount <= 100`, same mechanism as any other rule,
+the domain changed, nothing about the evaluator did.
 
 ## Design: kill switch
 
-The kernel calling the demo agent over HTTP and just closing the
-connection on timeout doesn't stop the agent's process from
-continuing to run and burn tool calls. For a kill to be real:
-
-- Give every dispatched call a hard wall-clock timeout at the HTTP
-  client level (not just an `asyncio` cancel, which a blocking call
-  inside the agent can ignore)
-- On timeout or a rule violation, issue an actual container-level
-  kill against that specific instance's container (Docker SDK for
-  Python, `client.containers.get(name).kill()`), not just an
-  app-level signal
-- Record the run as `killed` with the specific `Violation` (rule,
-  expected, actual), this detail is what the frontend shows on the
-  card, don't collapse it to a generic error
-- This same kill call is reused by the scaler (below) to remove an
-  idle instance, the trigger differs, the mechanism doesn't
+A real kill is container-level (Docker SDK,
+`client.containers.get(name).kill()`), not a cooperative timeout. On
+violation or timeout, kill the container, then start a fresh one for
+the next dispatch. Reused by the scaler below for idle scale-down,
+different trigger, same mechanism.
 
 ## Design: autoscaling
 
-The kernel manages a **pool per `agent_id`**, not one fixed container.
-A scaling policy declared per agent in the manifest drives a loop
-that grows and shrinks the pool:
-
-```yaml
-agents:
-  refund_node:
-    scaling:
-      min_replicas: 1
-      max_replicas: 4
-      target_concurrency: 2   # tasks per instance before spawning another
-      scale_down_after_idle_seconds: 30
-```
+The kernel manages a **pool per `agent_id`**. A scaling policy per
+agent (`min_replicas`, `max_replicas`, `target_concurrency`,
+`scale_down_after_idle_seconds`) drives a loop:
 
 - **Instance registry**: `instances: dict[str, list[AgentInstance]]`,
-  keyed by `agent_id`, each entry tracks `instance_id`,
-  `container_name`, `status` (`idle`/`working`), `started_at`
-- **Dispatch picks or creates**: `POST /dispatch` looks for an idle
-  instance first; if none and pool size < `max_replicas`, spin up a
-  new container (`client.containers.run(image, name=..., network=site_network)`)
-  and dispatch to it; if pool is at `max_replicas`, queue the task
-- **Scaler loop** (runs every few seconds inside the kernel, not a
-  separate service): scale up when queued/in-flight tasks per
-  instance exceeds `target_concurrency` and pool < `max_replicas`;
-  scale down (kill) an instance idle longer than
-  `scale_down_after_idle_seconds` when pool > `min_replicas`
-- Because a container that gets killed (violation or scale-down)
-  can't serve the next dispatch, always check the registry reflects
-  reality, don't dispatch to an instance whose container you just
-  killed
+  keyed by `agent_id`, tracking `instance_id`, `container_name`,
+  `status`, `started_at`
+- **Dispatch picks or creates**: look for an idle instance first; if
+  none and pool < `max_replicas`, spin up a new container; if pool is
+  at `max_replicas`, queue
+- **Scaler loop** (every few seconds): scale up when queued/in-flight
+  tasks per instance exceeds `target_concurrency`; scale down (kill)
+  an instance idle past `scale_down_after_idle_seconds` when pool >
+  `min_replicas`
+- **Every pool change writes an `AgentRow` to SpacetimeDB**: this is
+  what makes "watch Fulfillment scale from 1 to 4 pods" a live
+  subscription on the dashboard, not something you'd have to poll for
 
 ## Tasks
 
-- Load a manifest (Person 2's ingestion output, including each
-  agent's `scaling` policy) and hold it as this site's active
-  contract, in memory
-- `POST /dispatch` — validate `direct_assignable` / `entry_only_via`,
+- Subscribe to this site's **confirmed** manifest in SpacetimeDB's
+  `manifests` table (filter `status: confirmed`), update live on
+  re-confirm
+- `POST /dispatch` — validate `direct_assignable`/`entry_only_via`,
   pick or spin up an instance from the pool, call `POST /invoke` with
   a hard timeout
-- Constraint evaluator — generic `evaluate_rule` function per the
-  design above, run against the agent's response before marking a
-  run done
-- Kill switch — container-level kill on violation or timeout, plus
-  the restart-for-next-dispatch logic
+- Constraint evaluator — generic `evaluate_rule` per the design above
+- Kill switch — container-level kill on violation, timeout, or budget
+  breach, plus restart-for-next-dispatch logic
 - Budget enforcer — track tool-call count and elapsed time per
-  `run_id` in the in-memory store, kill on breach same as a
-  constraint violation
+  `run_id` in memory
 - Scaler loop — grow/shrink each agent's pool per its scaling policy,
-  reusing the kill mechanism for scale-down
+  write every change to SpacetimeDB's `agents` table
 - `POST /policy` — accept a policy update pushed from the coordinator
-  and apply it to this site's in-memory constraints
 - Post an event to the coordinator's `POST /events` after every run
-  (done or killed)
-- `GET /health` — report status and remaining budget
+  and every scale event
+- `GET /health` — status and remaining budget
 - `GET /agents/{agent_id}/instances` — current pool: instance count
   and status per instance
-- `POST /agents/{agent_id}/scale` — manual override to force a
-  scale-up, useful to trigger the demo moment live rather than
-  waiting for a real burst
+- `POST /agents/{agent_id}/scale` — manual override, this is what the
+  Federation dashboard's "Simulate flash sale" button calls
 
 ## Dependencies
 
-- Person 2's manifest format must be stable, including the `scaling`
-  field, before you can validate and scale against it
-- Person 4's `/invoke` endpoint must be callable, and needs to run in
-  its own container per instance so the kill switch and scaler have
-  something real to start and stop
-- Your event shape feeds Person 3's coordinator, flag any changes to
-  it before merging
+- Person 2's manifest format must be stable, and a manifest must
+  reach `status: confirmed` in SpacetimeDB before you have anything
+  to subscribe to
+- Person 4's `/invoke` endpoint must be callable, running in its own
+  container per instance, with real tool schemas so the constraint
+  rules you enforce are meaningful, not placeholders
+- Person 3 owns the `agents` table schema in SpacetimeDB, agree on
+  the `AgentRow` shape together, you're its primary writer
 
 ## API contract
 
@@ -172,7 +121,7 @@ agents:
 | POST | `/policy` | Apply a policy update from the coordinator |
 | GET | `/health` | Status and remaining budget |
 | GET | `/agents/{agent_id}/instances` | Current pool size and per-instance status |
-| POST | `/agents/{agent_id}/scale` | Manual scale-up, for demo purposes |
+| POST | `/agents/{agent_id}/scale` | Manual scale-up, used by the flash-sale demo trigger |
 
 ### Shared types (`shared.py`, import this, don't redefine it)
 
@@ -224,8 +173,8 @@ class GraphSpec(BaseModel):
 
 ```python
 """Kernel service — one instance per site. Dispatches tasks, enforces
-constraints from the manifest, scales agent pools, and can kill a
-run or an idle instance."""
+constraints from the confirmed manifest, scales agent pools, and can
+kill a run or an idle instance."""
 
 from datetime import datetime
 from enum import Enum
@@ -279,8 +228,6 @@ class KillResponse(BaseModel):
 
 
 class PolicyUpdateRequest(BaseModel):
-    """Called by the coordinator when it pushes a shared policy update."""
-
     rule: str
     value: float | str | bool
     reason: str
@@ -322,31 +269,11 @@ class ScaleResponse(BaseModel):
     replicas: int
 ```
 
-### Constraint rule and scaling policy shape (add to Person 2's `AgentConstraints` / manifest entry)
-
-```python
-from typing import Literal
-
-from pydantic import BaseModel
-
-
-class ConstraintRule(BaseModel):
-    field: str  # dot/bracket path into InvokeResponse, e.g. "tool_calls[0].args.amount"
-    op: Literal["lte", "gte", "eq", "in", "not_in"]
-    value: float | str | list
-
-
-class ScalingPolicy(BaseModel):
-    min_replicas: int = 1
-    max_replicas: int = 1
-    target_concurrency: int = 1
-    scale_down_after_idle_seconds: int = 30
-```
-
 ### What you call out to
 
-- Demo agent's `InvokeRequest` / `InvokeResponse` (see Person 4's doc)
-- Coordinator's `EventRequest` shape (see Person 3's doc), posted
-  after every run
+- Demo agent's `InvokeRequest`/`InvokeResponse` (see Person 4's doc)
+- Coordinator's `EventRequest` shape (see Person 3's doc)
+- SpacetimeDB's `agents` table (see Person 3's doc), you're the
+  primary writer as pool size changes
 - Docker SDK for Python, to create, kill, and restart demo agent
   containers on this site

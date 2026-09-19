@@ -1,73 +1,89 @@
-# rosterd — Person 3: Coordinator, state, and frontend
+# rosterd — Person 3: Coordinator, SpacetimeDB, and frontend
 
 ## High-level idea (context)
 
-rosterd takes an existing LangGraph agent system (a repo plus
-`constraints.yaml`) and makes it safe to run, schedulable, and
-federatable. Discovery turns the repo into a manifest, the kernel
-enforces that manifest at runtime, the frontend schedules work
-against it, and a coordinator federates results across sites.
+rosterd takes an existing LangGraph agent system and makes it safe to
+run, schedulable in plain language, and federatable, without a manual
+config file. Discovery reads the repo directly, a human confirms what
+was inferred, the kernel enforces the confirmed contract at runtime.
 
 ## Your role
 
-You own the federation layer and the thing everyone actually looks at
-during the demo: the coordinator (thin aggregator across sites), its
-state, and the frontend (ingest, roster, contracts, federation
-dashboard).
+You own the federation layer, the live state everyone watches, and
+every screen in the product, now seven screens instead of five: two
+are new (Review, Ask), directly answering the two tracks. Review is
+where a human turns inferred code into a confirmed, enforceable
+contract. Ask is the literal conversation-to-action flow, plain text
+in, a bounded task out.
 
-State does not need to be SpacetimeDB for this build. Keep the
-coordinator's state in memory (a plain dict, or a single SQLite file
-if you want it to survive a restart) and have the frontend poll
-`GET /sites` and `GET /events` on a short interval (every 1-2s)
-instead of subscribing to a live table. This removes an entire piece
-of new tech from the critical path, the coordinator is still the
-single source of truth, kernels and the frontend both talk to it over
-plain REST, nothing changes about who calls what.
+SpacetimeDB is scoped to three things: your dashboard tables
+(agents, tasks, sites, events), the `manifests` table (Person 2's,
+you only subscribe), and specifically, `agents` is now one row per
+running instance, not per agent type, this is what makes the
+autoscaling pod count a live subscription instead of a periodic poll,
+the actual best-use case for the SpacetimeDB track.
 
 ```
 kernel-site-A ──┐
-kernel-site-B ──┼──> coordinator-service (in-memory / SQLite state) ──> frontend (polls)
-kernel-site-C ──┘         │
-                           └──> policy update pushed back to any site
+kernel-site-B ──┼──> coordinator-service ──> SpacetimeDB (agents/tasks/sites/events)
+kernel-site-C ──┘         │                         │
+                           └── policy update ────────┘
+                                back to any site      frontend (subscribed, every screen live)
+
+ingestion-service ──> SpacetimeDB `manifests` (draft → confirmed) ──> frontend (Review, Contracts, Roster)
 ```
 
 ## Tasks
 
 ### Coordinator
 
-- `POST /events` — receive a run event from any kernel, store it in
-  memory, return a `policy_update` if this event matches a known
-  failure pattern
-- `GET /sites` — current status and score per site, computed from
-  events held in memory
-- `GET /events` — event log for the activity feed
+- `POST /events` — receive a run or scale event from any kernel,
+  write to SpacetimeDB's `events` table via `record_event`, return a
+  `policy_update` if it matches a known failure pattern
+- `GET /sites` — thin read of `sites`, mostly for debugging, frontend
+  subscribes directly
 - `POST /policy/push` — call each kernel's `POST /policy` when a
   shared failure pattern is detected across 2+ sites
-- Pick in-memory dict vs SQLite based on whether you need state to
-  survive a coordinator restart during the hackathon, dict is faster
-  to build, SQLite is one file and survives a crash
+
+### SpacetimeDB (dashboard + pool tables)
+
+- Define `agents` (**one row per running instance**, `site_id,
+  agent_id, instance_id, name, status, updated_at`), `tasks`, `sites`,
+  `events`
+- Reducers: `update_agent_status`, `record_task`, `record_event`,
+  `update_site_score`, called by the kernel and coordinator, never
+  written to directly by the frontend
+- `manifests` is Person 2's table, you subscribe for the Review,
+  Contracts, and Roster screens, agree on its shape with them early
+  since you likely own the SpacetimeDB module setup
 
 ### Frontend
 
-- Ingest screen (repo URL + constraints paste)
-- Roster screen: circular status bubbles per agent, calendar-style
-  task scheduling with an assignees field and expectation-criteria
-  checklist
-- Contracts screen: table of each agent's tools, data access, spend
-  limit, direct-assignable status, isolation level, sourced from the
-  manifest
-- Federation dashboard: per-site status, live scores, violation and
-  policy-update badges, coordinator activity feed
-- Poll `GET /sites` and `GET /events` on an interval for live-feeling
-  updates, no subscription layer needed
+- **Ingest**: repo URL only, no file upload
+- **Review** (new): table of inferred rules per agent, each with a
+  source badge (`schema` / `code guard` / `interrupt() detected` /
+  `default`, colored by confidence), edit affordance per row,
+  "Confirm and go live" calls Person 2's `POST /manifest/{id}/confirm`
+- **Ask** (new): one input, "what do you need done," calls Person
+  2's `POST /ask/parse`, shows the proposed agent and extracted
+  criteria as a card, "Do it" dispatches via Person 1's kernel
+- **Roster**: circular status bubbles per agent, stacked pod-count
+  badge when a pool has scaled past one instance ("Fulfillment ×3"),
+  calendar-style scheduling with assignees and expectation criteria
+- **Contracts**: tools, spend limit, source, direct-assignable
+  status, scaling range, subscribed to `manifests` (confirmed only)
+- **Federation**: per-site status, live pod counts per agent, a
+  **Simulate flash sale** button (fires a burst of dispatches at one
+  site to trigger autoscaling live), violation and policy-update
+  badges, coordinator activity feed
+- Subscribe directly to SpacetimeDB tables everywhere, no polling
 
 ## Dependencies
 
-- Event shape comes from Person 1's kernel
-- Manifest shape (for the Contracts and Roster screens) comes from
-  Person 2's ingestion
-- Build the frontend against fake data first, swap in real polling
-  once Person 1 and 2 are producing real events
+- Event and `AgentRow` (pool) shape from Person 1
+- Manifest shape and `/ask/parse` response shape from Person 2
+- Build every screen against fake data first, swap in real
+  subscriptions once Person 1 and 2 are producing real events
 
 ## API contract
 
@@ -75,9 +91,8 @@ kernel-site-C ──┘         │
 
 | Method | Path | Purpose |
 |---|---|---|
-| POST | `/events` | Kernel posts a run event, may receive a policy update back |
-| GET | `/sites` | Per-site status and score |
-| GET | `/events` | Event log for the dashboard feed |
+| POST | `/events` | Kernel posts a run or scale event, may receive a policy update back |
+| GET | `/sites` | Per-site status and score (debug/fallback, frontend subscribes instead) |
 | POST | `/policy/push` | Coordinator pushes a policy update to a kernel |
 
 ### Shared types (`shared.py`, import this, don't redefine it)
@@ -141,13 +156,14 @@ from shared import RunStatus, SiteStatus, Violation
 
 
 class EventRequest(BaseModel):
-    """Posted by a kernel after every run."""
+    """Posted by a kernel after every run or scale event."""
 
     site_id: str
-    run_id: str
+    run_id: str | None = None  # None for a pool scale event
     agent_id: str
-    status: RunStatus
+    status: RunStatus | Literal["scaled_up", "scaled_down"]
     violation: Violation | None = None
+    pool_size: int | None = None
     timestamp: datetime
 
 
@@ -170,42 +186,58 @@ class SiteSummary(BaseModel):
 
 class EventLogEntry(BaseModel):
     site_id: str
-    run_id: str
-    status: RunStatus
+    run_id: str | None = None
+    status: RunStatus | Literal["scaled_up", "scaled_down"]
     violation: Violation | None = None
     timestamp: datetime
 
 
 class PolicyPushRequest(BaseModel):
-    """Coordinator calling out to each kernel's POST /policy."""
-
     rule: str
     value: float | str | bool
     reason: str
 ```
 
-### State store (in-memory or SQLite, this replaces SpacetimeDB)
-
-`SiteSummary` and `EventLogEntry` above are also your storage shape,
-you don't need a separate table schema. A simple approach:
+### SpacetimeDB tables you own
 
 ```python
-# in-memory version
-events: list[EventLogEntry] = []
-sites: dict[str, SiteSummary] = {}
+from datetime import datetime
 
-# on POST /events: append to events, recompute sites[site_id]
-# GET /sites returns list(sites.values())
-# GET /events returns events (most recent first)
+from pydantic import BaseModel
+
+
+class AgentRow(BaseModel):
+    """One row PER RUNNING INSTANCE, not per agent type. A pool of 3
+    Fulfillment instances is 3 rows sharing agent_id='fulfillment'."""
+
+    site_id: str
+    agent_id: str
+    instance_id: str
+    name: str
+    status: str  # "idle" | "working" | "killed"
+    updated_at: datetime
+
+
+class TaskRow(BaseModel):
+    task_id: str
+    site_id: str
+    agent_id: str
+    title: str
+    status: str
+    assignees: list[str]
+    criteria: list[str]
+    priority: str
+    source: str | None = None
+    created_at: datetime
+
+# `sites` table   -> SiteSummary
+# `events` table  -> EventLogEntry
 ```
-
-If you want it to survive a restart, swap the two module-level
-variables for a single SQLite file with an `events` table matching
-`EventLogEntry` and a `sites` table matching `SiteSummary`, same
-read/write shape either way.
 
 ### Who sends you data
 
-- Person 1's kernel posts `EventRequest` to `POST /events` after every
-  run
-- Person 2's ingestion manifest feeds the Roster and Contracts screens
+- Person 1's kernel posts `EventRequest` to `POST /events` and writes
+  `AgentRow` updates directly to SpacetimeDB as instance status and
+  pool size change
+- Person 2's ingestion writes `manifests` (draft, then confirmed),
+  and answers `/ask/parse` for the Ask screen

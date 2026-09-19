@@ -1,19 +1,20 @@
-# rosterd — Person 4: Demo agentic system
+# rosterd — Person 4: Demo agentic system (e-commerce)
 
 ## High-level idea (context)
 
-rosterd takes an existing LangGraph agent system (a repo plus
-`constraints.yaml`) and makes it safe to run, schedulable, and
-federatable. Discovery turns the repo into a manifest, the kernel
-enforces that manifest at runtime, the frontend schedules work
-against it, and a coordinator federates results across sites.
+rosterd takes an existing LangGraph agent system and makes it safe to
+run, schedulable in plain language, and federatable, without a manual
+config file. Discovery reads the repo directly, a human confirms what
+was inferred, the kernel enforces the confirmed contract at runtime.
 
 ## Your role
 
-You build the example LangGraph system the whole platform is
-demonstrated against. This is a deliverable in its own right, not
-just a test fixture, it's what the audience sees the platform
-discover, schedule against, and catch a failure in.
+You build the order-fulfillment LangGraph system the whole platform
+is demonstrated against. This matters more than it did before: there
+is no `constraints.yaml` anymore, ingestion infers everything from
+your code. Your tool schemas, your guard clauses, and your
+`interrupt()` call ARE the contract. Write them for real, or the
+"no manual config" pitch has nothing to point at.
 
 ```
 kernel-service ──> demo-agent-service (your build, same site only)
@@ -25,30 +26,41 @@ answers.
 ## Tasks
 
 - Build the 3-agent LangGraph system:
-  - **Triage** — classifies an incoming request (billing, refund,
-    technical)
-  - **Refund** — issues refunds, tool-bound, capped by policy
-  - **Escalation** — hands off to a human, not directly assignable
-- Write `constraints.yaml` for this system (refund cap, direct-
-  assignable flags, entry rules)
+  - **Order Intake** — classifies an incoming order (standard,
+    high-value, fraud-flagged)
+  - **Fulfillment** — reserves inventory, tool
+    `reserve_inventory(sku: str, qty: int)`, give `qty` a real
+    Pydantic constraint (e.g. `Field(le=stock_on_hand)` or a fixed
+    sane cap if you're not modeling live stock), this is the agent
+    whose pool autoscales under a flash-sale burst
+  - **Refund/Exception** — issues refunds, tool
+    `issue_refund(order_id: str, amount: float = Field(le=100))`,
+    call `interrupt()` before approving anything the schema doesn't
+    already bound, this single call is what makes ingestion correctly
+    infer `direct_assignable: false` for this node
 - `POST /invoke` — accept `{entry_node, input}`, run that node (and
   downstream routing if applicable), return output plus any tool
-  calls made
-- `GET /graph` — expose the same graph structure Person 2's ingestion
-  extracts statically, so the two can be checked against each other
+  calls made, with the tool call args intact (this is what the
+  kernel's constraint evaluator reads)
+- `GET /graph` — expose the same graph structure ingestion extracts
+  statically, so the two can be checked against each other
 - Seed the misdirection scenario: a conversation where a fake
-  "manager override" message tries to get Refund to approve an
-  out-of-policy amount, this is the demo's core failure-caught moment
+  "manager override" message tries to get Refund/Exception to approve
+  an out-of-policy amount. It should trip the **schema-inferred**
+  `amount <= 100` rule specifically, not a hardcoded kernel check,
+  that's the point being demonstrated
 - Dockerfile for this service, isolated on its own site network per
   the compose file (only the kernel can reach you)
 
 ## Dependencies
 
-- None to start, you can build in parallel with everyone else
-- Coordinate with Person 2 early so your repo's actual folder/graph
-  structure matches what their introspection expects
+- None to start, build in parallel with everyone else, but get your
+  tool schemas and the `interrupt()` call in early even as rough
+  stubs, Person 2 needs something real to test inference against, not
+  just a graph shape
 - Your `/invoke` response is what Person 1's kernel checks against
-  the manifest's constraints, so keep the shape exact
+  the inferred constraints, keep the tool-call args shape exact and
+  don't strip them out of the response
 
 ## API contract
 
@@ -108,8 +120,9 @@ class GraphSpec(BaseModel):
 ### Your schema (`demo_agent.py`)
 
 ```python
-"""Demo agent service (Person 4's LangGraph system). Only ever answers,
-never calls out. Wrapped and invoked by its site's kernel."""
+"""Demo agent service (Person 4's e-commerce LangGraph system). Only
+ever answers, never calls out. Wrapped and invoked by its site's
+kernel."""
 
 from enum import Enum
 
@@ -119,9 +132,9 @@ from shared import GraphSpec
 
 
 class EntryNode(str, Enum):
-    triage = "triage"
-    refund = "refund"
-    escalation = "escalation"
+    order_intake = "order_intake"
+    fulfillment = "fulfillment"
+    refund_exception = "refund_exception"
 
 
 class InvokeInput(BaseModel):
@@ -136,7 +149,7 @@ class InvokeRequest(BaseModel):
 
 class ToolCall(BaseModel):
     tool: str
-    args: dict
+    args: dict  # keep this intact and exact, the kernel evaluates rules against it
     result: str | None = None
 
 
@@ -148,11 +161,36 @@ class InvokeResponse(BaseModel):
 
 class GraphResponse(GraphSpec):
     """Same shape as GraphSpec. Returned by GET /graph, mirrors what
-    ingestion extracted statically at setup time."""
+    ingestion extracts statically at setup time."""
 ```
+
+### Reference: the tool schemas ingestion infers from
+
+These aren't part of the API contract above, they live in your own
+LangChain tool definitions, shown here so it's clear what Person 2's
+inference is actually reading:
+
+```python
+from pydantic import BaseModel, Field
+
+
+class ReserveInventoryArgs(BaseModel):
+    sku: str
+    qty: int = Field(le=50)  # or Field(le=stock_on_hand) if you model live stock
+
+
+class IssueRefundArgs(BaseModel):
+    order_id: str
+    amount: float = Field(le=100)
+```
+
+And in the Refund/Exception node body, a call to LangGraph's
+`interrupt()` before any refund outside what the schema already
+bounds is approved, this is the signal that flips
+`direct_assignable` to `false` for this node.
 
 ### Who calls you
 
-- Person 1's kernel calls `POST /invoke` on every dispatched task, and
-  checks your response's tool calls / output against the manifest's
-  constraints before marking the run done or killing it
+- Person 1's kernel calls `POST /invoke` on every dispatched task,
+  and checks your response's `tool_calls[].args` against the
+  inferred constraints before marking the run done or killing it
