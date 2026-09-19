@@ -1,0 +1,50 @@
+# otel-collector config for rosterd. Owned by Person 1 (kernel) per the
+# brief -- "stand up the otel-collector + Jaeger containers in compose,
+# define the span/attribute naming conventions the rest of the team
+# follows." Every rosterd service (kernel, demo-agent, ingestion,
+# coordinator) sends traces and metrics here over OTLP/HTTP.
+#
+# Tracing conventions:
+#   - Span namespace: rosterd.* for every custom attribute
+#     (rosterd.site_id, rosterd.agent_id, rosterd.run_id, ...).
+#   - Root span per dispatch is named `dispatch`; child spans use the
+#     verb they perform (`invoke_agent`, `constraint_check`,
+#     `scale_decision`, `post_event`).
+#   - Propagate W3C `traceparent` on every outbound call so one dispatch
+#     is one trace across services (kernel -> demo agent -> coordinator).
+#   - A killed run sets span status to ERROR and attaches
+#     `violation.rule` / `violation.expected` / `violation.actual`.
+#
+# Metric namespace: rosterd.agent.replicas / rosterd.agent.load /
+# rosterd.agent.desired_replicas / rosterd.budget.remaining -- see
+# tracing.py.
+
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+      grpc:
+        endpoint: 0.0.0.0:4317
+
+processors:
+  batch: {}
+
+exporters:
+  otlp/jaeger:
+    endpoint: jaeger:4317
+    tls:
+      insecure: true
+  debug:
+    verbosity: basic
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlp/jaeger, debug]
+    metrics:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [debug]
