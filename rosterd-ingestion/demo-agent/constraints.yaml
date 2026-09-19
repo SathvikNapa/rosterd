@@ -1,0 +1,23 @@
+# rosterd constraints for the support graph.
+#
+# Node names must match the node names in agent.py exactly; ingestion rejects
+# the file if they do not. Reserved keys (direct_assignable, entry_only_via,
+# purpose, tools, id) shape the manifest entry. Every other key is passed
+# through to the kernel as a runtime constraint.
+version: 1
+
+constraints:
+  triage_node:
+    purpose: Classifies incoming requests
+    direct_assignable: true
+
+  refund_node:
+    purpose: Issues refunds, $100 cap
+    direct_assignable: true
+    max_refund_usd: 100
+
+  escalation_node:
+    purpose: Hands off to a human
+    direct_assignable: false
+    entry_only_via: [refund_node, triage_node]
+    requires_prior_node: refund_node
