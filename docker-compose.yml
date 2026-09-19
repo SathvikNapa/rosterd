@@ -1,23 +1,28 @@
 # rosterd — local dev / demo compose.
 #
-# Owned end-to-end by Person 1 (kernel): "stand up the otel-collector +
-# Jaeger containers in compose, define the naming conventions the rest of
-# the team follows" (rosterd-sathvik-kernel.md). Only the pieces that
-# actually exist in this repo today are wired up as real services --
-# ingestion, coordinator, the frontend, and the demo-agent image are each
-# that teammate's own build; the commented blocks below are where they
-# plug in, not a promise about their shape.
+# otel-collector + Jaeger are owned by Person 1 (kernel): "stand up the
+# containers in compose, define the naming conventions the rest of the
+# team follows" (rosterd-sathvik-kernel.md). kernel-site-a and coordinator
+# are both real, built services now. ingestion, the frontend, and the
+# demo-agent image are each that teammate's own build; the commented
+# blocks below are where they plug in, not a promise about their shape.
 #
 # Quick start:
 #   docker compose up --build
 #   open http://localhost:16686        # Jaeger UI
-#   curl  http://localhost:8100/healthz
+#   curl  http://localhost:8100/healthz  # kernel
+#   curl  http://localhost:8300/healthz  # coordinator
 #
 # The kernel defaults to ROSTERD_KERNEL_DOCKER_MODE=fake here, same as
 # scripts/run.sh, so `docker compose up` works before Shruti's demo-agent
 # image exists and without mounting the host's Docker socket. Flip to
 # `real` (and uncomment the docker.sock mount + rosterd-site-a network)
 # once that image is built. See rosterd-kernel/README.md.
+#
+# The coordinator already knows about kernel-site-a
+# (ROSTERD_COORDINATOR_SITE_KERNELS below) -- add a kernel-site-b service
+# and extend that map to see a policy pushed to a site that never reported
+# the violation itself. See rosterd-coordinator/README.md.
 
 networks:
   rosterd-backend:
@@ -65,11 +70,26 @@ services:
     ports:
       - "8100:8100"
     networks: [rosterd-backend, rosterd-site-a]
-    depends_on: [otel-collector]
+    depends_on: [otel-collector, coordinator]
     # Real Docker mode needs the host socket mounted so this container can
     # start/kill its own sibling demo-agent containers:
     # volumes:
     #   - /var/run/docker.sock:/var/run/docker.sock
+
+  coordinator:
+    build: ./rosterd-coordinator
+    environment:
+      ROSTERD_COORDINATOR_OTEL_ENDPOINT: http://otel-collector:4318
+      # {site_id: kernel_base_url} -- every kernel this coordinator can push
+      # a policy to. Add a site-b entry here once a second kernel exists
+      # (see rosterd-coordinator/README.md "Adding a second site").
+      ROSTERD_COORDINATOR_SITE_KERNELS: '{"site-a": "http://kernel-site-a:8100"}'
+      # ROSTERD_COORDINATOR_SPACETIMEDB_URL: http://spacetimedb:3000   # Joy's module
+      # ROSTERD_COORDINATOR_SPACETIMEDB_MODULE: rosterd
+    ports:
+      - "8300:8300"
+    networks: [rosterd-backend]
+    depends_on: [otel-collector]
 
   # ---------------------------------------------------------------------
   # Plug in as each teammate's service gets a Dockerfile. Left commented,
@@ -80,11 +100,6 @@ services:
   # ingestion:
   #   build: ./rosterd-ingestion
   #   ports: ["8000:8000"]
-  #   networks: [rosterd-backend]
-
-  # coordinator:
-  #   build: ./rosterd-coordinator
-  #   ports: ["8300:8300"]
   #   networks: [rosterd-backend]
 
   # demo-agent-site-a:
