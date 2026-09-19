@@ -1,0 +1,6 @@
+{
+  "dependencies": ["."],
+  "graphs": {
+    "order_fulfillment": "./graph.py:graph"
+  }
+}
