@@ -45,6 +45,7 @@ networks:
 
 volumes:
   spacetimedb-data:
+  spacetimedb-publish-config:
 
 services:
   otel-collector:
@@ -141,11 +142,21 @@ services:
   # then exits. kernel-site-a and coordinator both wait on this completing
   # successfully so a fresh `docker compose up` always has the module ready
   # before either service's first write -- see rosterd-spacetimedb/README.md.
+  #
+  # The CLI auto-generates a fresh identity on first use if none is cached
+  # (`/root/.config/spacetime/`), and only the identity that originally
+  # created a database may publish updates to it -- confirmed by watching a
+  # second `docker compose up` fail with "403 Forbidden: ... is not
+  # authorized ... update database" once `rosterd` already existed from a
+  # prior run. `spacetimedb-publish-config` persists that directory across
+  # container rebuilds so every publish reuses the same identity.
   spacetimedb-publish:
     build: ./rosterd-spacetimedb
     environment:
       ROSTERD_SPACETIMEDB_URL: http://spacetimedb:3000
       ROSTERD_SPACETIMEDB_MODULE: rosterd
+    volumes:
+      - spacetimedb-publish-config:/root/.config/spacetime
     networks: [rosterd-backend]
     depends_on: [spacetimedb]
 
