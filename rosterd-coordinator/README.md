@@ -13,19 +13,20 @@ kernel-site-C ──┘         │
 ```
 
 **Scope note:** rosterd-joy-coordinator-frontend.md covers three things --
-this service, the SpacetimeDB module schema, and an 8-screen frontend. Only
-the coordinator-service (Python/FastAPI, matching the conventions
-`rosterd-ingestion` and `rosterd-kernel` already established) is built
-here. The SpacetimeDB module and the frontend are a different stack and
-scope entirely and aren't attempted in this pass -- see "Notes for the
-team" below for exactly where the seams are.
+this service, the SpacetimeDB module schema, and an 8-screen frontend. The
+coordinator-service (Python/FastAPI, matching the conventions
+`rosterd-ingestion` and `rosterd-kernel` already established) and the
+SpacetimeDB module (`../rosterd-spacetimedb/`, database name `rosterd`)
+are both built and wired together now. The 8-screen frontend is a
+different stack entirely and isn't attempted here -- see "Notes for the
+team" below for exactly where that seam is.
 
 ## Quick start
 
 ```bash
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 ./scripts/run.sh                 # serves on :8300, /docs for the API explorer
-.venv/bin/python -m pytest       # 34 tests, no SpacetimeDB/kernel/collector needed
+.venv/bin/python -m pytest       # 41 tests, no SpacetimeDB/kernel/collector needed
 ```
 
 Nothing above needs a live kernel, SpacetimeDB, or OTel collector --
@@ -33,8 +34,8 @@ Nothing above needs a live kernel, SpacetimeDB, or OTel collector --
 broadcast a policy push to (harmless no-op), and SpacetimeDB writes fall
 back to logging. Verified end-to-end against two real, independently
 running processes (a live coordinator + a live `rosterd-kernel`, not
-mocks) and again across the full `docker compose` stack -- see "Verified"
-below.
+mocks), again across the full `docker compose` stack, and separately
+against the real `rosterd` SpacetimeDB module -- see "Verified" below.
 
 ## What it does
 
@@ -137,24 +138,28 @@ Same spirit as `rosterd-ingestion` and `rosterd-kernel`'s own READMEs:
   for one coordinator (the brief's own architecture: coordinator is a
   single federation point, not per-site), not something a second worker
   process could share.
-- **`tasks` table ownership is unaddressed.** Joy's brief lists `tasks`
-  among the SpacetimeDB tables she owns (`TaskRow` is defined in
-  `spacetime.py` for reference), but nothing in the coordinator's own
+- **`tasks` table ownership is unaddressed.** The brief lists `tasks`
+  among the SpacetimeDB tables Joy owns, and the real module now has both
+  the table and a `record_task` reducer ready (`TaskRow` is defined in
+  `spacetime.py` for reference) -- but nothing in the coordinator's own
   contract (`POST /events` / `GET /sites` / `POST /policy/push`) ever
   produces one. It's most likely populated directly by the frontend's Ask
   flow, not routed through the coordinator -- worth confirming with Joy.
-- **No SpacetimeDB module or frontend in this pass** (see the scope note
-  up top). `spacetime.py`'s `HttpReducerSpacetimeWriter` is ready to point
-  at Joy's module the moment it exists (`ROSTERD_COORDINATOR_SPACETIMEDB_URL`
-  / `_MODULE`), calling `update_site_score` and `record_event` by name per
-  the brief's reducer list.
+- **No frontend in this pass** (see the scope note up top). The
+  SpacetimeDB module itself is real now (`../rosterd-spacetimedb/`) --
+  `spacetime.py`'s `HttpReducerSpacetimeWriter` calls its
+  `update_site_score` and `record_event` reducers for real when
+  `ROSTERD_COORDINATOR_SPACETIMEDB_URL` / `_MODULE` are set, which
+  `docker-compose.yml` now does by default.
 
 ## Verified
 
-- 34 tests (`pytest`) -- pattern detection (site-threshold, cooldown,
+- 41 tests (`pytest`) -- pattern detection (site-threshold, cooldown,
   window pruning, lte/gte tightening math, non-numeric ops), site
   status/score derivation, the broadcaster's fan-out/exclusion/best-effort
-  behavior, and the full HTTP contract.
+  behavior, the full HTTP contract, and the SpacetimeDB writer's wire
+  format (array-wrapped body, `{"some": value}` / bare `null` for the
+  Option fields -- see `tests/test_spacetime.py`).
 - **Two live, independently running processes** (this coordinator + a real
   `rosterd-kernel`, no mocks): posted the misdirection scenario's violation
   from two different `site_id`s, confirmed the second `POST /events`
@@ -166,6 +171,12 @@ Same spirit as `rosterd-ingestion` and `rosterd-kernel`'s own READMEs:
   (`http://kernel-site-a:8100`), and confirmed the push landed on the
   containerized kernel. Both services also showed up in Jaeger
   (`rosterd-kernel-site-a`, `rosterd-coordinator`) with real exported spans.
+- **The real SpacetimeDB module**: brought up the full stack including
+  `spacetimedb` + `spacetimedb-publish`, posted a real event to this
+  coordinator's `POST /events` (including a `violation` payload, to
+  exercise the Option-wrapping path), and confirmed the row landed via
+  `spacetime sql rosterd ... "SELECT * FROM events"` against the actual
+  containerized server -- not a mock, not the unit tests' fake transport.
 
 ## Layout
 
@@ -177,7 +188,7 @@ Same spirit as `rosterd-ingestion` and `rosterd-kernel`'s own READMEs:
 | `broadcaster.py` | Fans a policy update out to every known kernel (`PolicyBroadcaster`) |
 | `store.py` | Bounded in-memory event log backing `GET /events` |
 | `sweeper.py` | Background thread keeping the SpacetimeDB `sites` rows current for silent sites |
-| `spacetime.py` | `SiteSummary`/`EventLogEntry` writer (logs, or calls SpacetimeDB's HTTP reducer API) |
+| `spacetime.py` | `SiteSummary`/`EventLogEntry` writer (logs, or calls the real `rosterd` module's HTTP reducer API) |
 | `tracing.py` | OTel wrapper -- degrades to a no-op if the SDK/collector isn't there; adds context *extraction* over the kernel's inject-only version |
 | `app.py` | FastAPI wiring -- `create_app()` factory + the `Container` composition root |
 | `docs/API.md` | curl-able examples for every endpoint |

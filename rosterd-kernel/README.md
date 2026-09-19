@@ -18,7 +18,7 @@ frontend ──> kernel-service ──> demo-agent-service × pool (same site on
 ```bash
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 ./scripts/run.sh                 # serves on :8100, /docs for the API explorer
-.venv/bin/python -m pytest       # 63 tests, no Docker/SpacetimeDB/collector needed
+.venv/bin/python -m pytest       # 66 tests, no Docker/SpacetimeDB/collector needed
 ```
 
 Nothing above needs Docker, SpacetimeDB, Param's ingestion service, or an
@@ -104,7 +104,7 @@ discipline as `rosterd-ingestion`'s own `/healthz` / `/manifests`.
 | `legacy_constraints.py` | Stopgap: adapts ingestion's real dict-shaped `constraints` into `ConstraintRule`s |
 | `manifest_source.py` | Where the manifest comes from — polls ingestion today, see "Notes for the team" |
 | `demo_agent_client.py`, `coordinator_client.py` | Clients for Shruti's `/invoke` and Joy's `/events` |
-| `spacetime.py` | `AgentRow` / `AgentMetricsRow` + the writer (logs, or calls SpacetimeDB's HTTP reducer API) |
+| `spacetime.py` | `AgentRow` / `AgentMetricsRow` + the writer (logs, or calls the real `rosterd` module's HTTP reducer API) |
 | `constraints.py` | `evaluate_rule` / `evaluate_all` — the generic field/op/value engine |
 | `budget.py` | Tool-call-count / elapsed-time tracking per `run_id` |
 | `registry.py` | The instance pool (`instances: dict[str, list[AgentInstance]]`) + queue counters |
@@ -177,8 +177,11 @@ A few places where the brief left room for judgment, called out explicitly
   (`POST /v1/database/{module}/call/{reducer}`), not generated bindings —
   none exist in this repo. Unset `ROSTERD_KERNEL_SPACETIMEDB_URL` and the
   kernel logs every row it would have written instead, so the scaler and
-  kill switch are fully exercised (see the test suite) without Joy's
-  module needing to exist first.
+  kill switch are fully exercised (see the test suite) without a running
+  SpacetimeDB. The real module now exists at `../rosterd-spacetimedb/`
+  (database name `rosterd`) and `docker-compose.yml` points this kernel at
+  it by default — see that module's README for the calling convention
+  (JSON array body, not a bare object) and the "Verified" section below.
 
 - **Kill is lazy about "restart-for-next-dispatch."** There's no separate
   "replace this exact instance" codepath — `killer.kill()` just removes the
@@ -249,6 +252,20 @@ Also caught in the same pass: the brief names three custom spans
 been missed entirely. Fixed, with a regression test
 (`tests/test_tracing_spans.py`) that asserts the actual span names a
 dispatch and a scaler tick request, not just that tracing doesn't crash.
+
+## Verified against the real SpacetimeDB module
+
+`HttpReducerSpacetimeWriter._call()` originally sent the reducer args as a
+bare JSON object (`json=args`); the real SpacetimeDB HTTP API rejects that
+and requires a JSON array of positional arguments. Found by building
+`../rosterd-spacetimedb/` and round-tripping real calls against it, not by
+reading the docs (the bundled SDK reference doesn't state the HTTP body
+shape at all — only the TypeScript-side reducer signature). Fixed, with a
+regression test (`tests/test_spacetime.py`) that pins the array-wrapped
+body via a mocked transport, and re-verified for real: called
+`HttpReducerSpacetimeWriter.write_agent` / `.write_agent_metrics` directly
+against the actual `docker compose` stack's `spacetimedb` service and
+confirmed both rows landed via `spacetime sql`.
 
 ## Known limitations
 
