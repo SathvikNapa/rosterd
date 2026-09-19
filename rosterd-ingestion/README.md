@@ -38,17 +38,46 @@ Against the bundled `demo-agent/` fixture that produces:
 
 Which is exactly the Contracts screen in the product mockup.
 
+## Probing a real repo
+
+`scripts/probe.py` clones a public LangGraph repo and prints the wiring rosterd discovers, without going through HTTP or storing a manifest. It is how the discovery rules were validated against code nobody on this team wrote.
+
+```bash
+.venv/bin/python scripts/probe.py https://github.com/langchain-ai/react-agent
+.venv/bin/python scripts/probe.py --suite     # five LangChain templates
+```
+
+It tries `import` mode and falls back to `static` when the target repo's dependencies are not installed here — which is the normal case for someone else's repo — and always reports which mode produced the answer.
+
+Verified against five of LangChain's own public templates, every one matching the graph definition in its source exactly:
+
+| Repo | Agents | Edges | Mode |
+| --- | --- | --- | --- |
+| `react-agent` | 2 | 4 | static |
+| `memory-agent` | 2 | 4 | static |
+| `retrieval-agent-template` | 4 | 4 | static |
+| `data-enrichment` | 3 | 8 | static |
+| `new-langgraph-project` | 1 | 2 | import |
+
 ## Endpoints
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| `POST` | `/ingest` | Repo URL + constraints YAML in, manifest out |
+| `POST` | `/ingest` | Repo URL + constraints YAML in, **draft** manifest out |
+| `POST` | `/manifest/{manifest_id}/confirm` | Approve a draft, optionally with edits, making it live |
+| `POST` | `/ask/parse` | Plain text in, a proposed task out |
 | `GET` | `/manifest/{manifest_id}` | Re-fetch a manifest without re-ingesting |
 | `GET` | `/manifest/{manifest_id}/provenance` | Commit, hashes, version, warnings |
 | `GET` | `/manifests` | Everything ingested so far |
 | `GET` | `/healthz` | Liveness and effective settings |
 
 Full request/response shapes, error codes, and notes for Person 1 and Person 3 are in [docs/API.md](docs/API.md).
+
+## The confirm gate
+
+Ingestion produces a **draft**. A draft governs nothing: the kernel ignores it and `/ask/parse` refuses it. `POST /manifest/{id}/confirm` takes the possibly-edited agent list from the Review screen and derives a **new, immutable, confirmed** manifest — it does not mutate the draft.
+
+That matters twice over. A kernel pinned to a manifest never sees it change underneath a running task, and both sides of the trust boundary stay readable, so you can always diff what discovery *inferred* against what a human *approved*. The returned `manifest_id` is the new one; use it for everything afterwards. Reasoning in [ADR-002](docs/ADR-002-confirm-gate.md).
 
 ## Versioning, in one paragraph
 

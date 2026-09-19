@@ -1,8 +1,10 @@
 """rosterd ingestion service (Person 2).
 
 Endpoints
-    POST /ingest                        repo URL + constraints YAML in, manifest out
-    GET  /manifest/{manifest_id}        re-fetch a manifest without re-ingesting
+    POST /ingest                          repo URL + constraints YAML in, draft manifest out
+    POST /manifest/{manifest_id}/confirm  approve a draft, optionally with edits
+    POST /ask/parse                       plain text in, a proposed task out
+    GET  /manifest/{manifest_id}          re-fetch a manifest without re-ingesting
 
 Both are exactly the contract in the brief. The three below are additive
 conveniences for debugging and for the Contracts screen's "Verified" badge; they
@@ -22,7 +24,18 @@ from fastapi.responses import JSONResponse
 
 from config import MANIFEST_SCHEMA_VERSION, get_settings
 from errors import IngestError
-from ingestion import IngestRequest, IngestResponse, ManifestResponse
+from ask import parse_ask
+from errors import ManifestNotConfirmedError, NoAssignableAgentError
+from ingestion import (
+    AskRequest,
+    AskResponse,
+    ConfirmRequest,
+    ConfirmResponse,
+    IngestRequest,
+    IngestResponse,
+    ManifestResponse,
+    ManifestStatus,
+)
 from service import ingest
 from store import ManifestStore, Provenance
 
@@ -72,7 +85,10 @@ def post_ingest(request: IngestRequest) -> IngestResponse:
     )
     record = outcome.record
     return IngestResponse(
-        manifest_id=record.manifest_id, agents=record.agents, graph=record.graph
+        manifest_id=record.manifest_id,
+        status=record.provenance.status,
+        agents=record.agents,
+        graph=record.graph,
     )
 
 
@@ -81,8 +97,60 @@ def get_manifest(manifest_id: str) -> ManifestResponse:
     """Return a previously generated manifest. Never re-ingests, never clones."""
     record = _store().get(manifest_id)
     return ManifestResponse(
-        manifest_id=record.manifest_id, agents=record.agents, graph=record.graph
+        manifest_id=record.manifest_id,
+        status=record.provenance.status,
+        agents=record.agents,
+        graph=record.graph,
     )
+
+
+@app.post("/manifest/{manifest_id}/confirm", response_model=ConfirmResponse)
+def post_confirm(manifest_id: str, request: ConfirmRequest) -> ConfirmResponse:
+    """Approve a draft manifest, optionally replacing its agent list.
+
+    This is the trust boundary: discovery infers, a human confirms, and only
+    then does anything live depend on it. Send an empty `agents` list to
+    confirm exactly what was discovered.
+
+    Returns a NEW manifest_id. Confirming derives an immutable confirmed
+    manifest rather than mutating the draft, so a kernel pinned to a manifest
+    never sees it change, and the draft stays readable next to the confirmed
+    version for comparison. See docs/ADR-002-confirm-gate.md.
+    """
+    record = _store().confirm(manifest_id, request.agents or None)
+    return ConfirmResponse(manifest_id=record.manifest_id)
+
+
+@app.post("/ask/parse", response_model=AskResponse)
+def post_ask_parse(request: AskRequest) -> AskResponse:
+    """Turn a plain-language request into a proposed task.
+
+    Only *confirmed* manifests can be asked against, and only agents the
+    contract marks `direct_assignable` are proposable — an agent reachable
+    only via another must not become a direct assignee just because someone
+    described it well.
+
+    The result is a proposal for a human to accept, not a dispatch.
+    """
+    record = _store().get(request.manifest_id)
+
+    if record.provenance.status is not ManifestStatus.confirmed:
+        raise ManifestNotConfirmedError(
+            "This manifest is still a draft. Confirm it before asking against it.",
+            manifest_id=request.manifest_id,
+            status=record.provenance.status.value,
+        )
+
+    assignable = [a for a in record.agents if a.direct_assignable]
+    if not assignable:
+        raise NoAssignableAgentError(
+            "No agent in this manifest is directly assignable.",
+            manifest_id=request.manifest_id,
+            agents=[a.id for a in record.agents],
+        )
+
+    agent_id, task, confidence = parse_ask(request.text, assignable)
+    return AskResponse(agent_id=agent_id, task=task, confidence=confidence)
 
 
 @app.get("/manifest/{manifest_id}/provenance", response_model=Provenance)

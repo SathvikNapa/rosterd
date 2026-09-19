@@ -28,8 +28,11 @@ class TestIngest:
         assert response.status_code == 200
 
         body = response.json()
-        assert set(body) == {"manifest_id", "agents", "graph"}
+        # `status` joined the contract with the confirm gate — a manifest is a
+        # draft until a human approves it.
+        assert set(body) == {"manifest_id", "status", "agents", "graph"}
         assert body["manifest_id"].startswith("mf_")
+        assert body["status"] == "draft"
         assert set(body["graph"]) == {"nodes", "edges"}
 
         agent = body["agents"][0]
@@ -180,3 +183,155 @@ def test_healthz_reports_effective_settings(client):
     body = client.get("/healthz").json()
     assert body["status"] == "ok"
     assert body["discovery_mode"] == "import"
+
+
+class TestConfirmGate:
+    """POST /manifest/{id}/confirm — the human trust boundary."""
+
+    def test_ingest_produces_a_draft(self, client, demo):
+        url, _ = demo
+        assert ingest(client, url).json()["status"] == "draft"
+
+    def test_confirming_returns_a_new_confirmed_manifest(self, client, demo):
+        url, _ = demo
+        draft = ingest(client, url).json()["manifest_id"]
+
+        response = client.post(f"/manifest/{draft}/confirm", json={"agents": []})
+        assert response.status_code == 200
+
+        body = response.json()
+        assert body["status"] == "confirmed"
+        assert body["manifest_id"] != draft, "confirming must not mutate the draft"
+
+    def test_the_draft_survives_confirmation(self, client, demo):
+        """Both sides of the trust boundary stay readable and diffable."""
+        url, _ = demo
+        draft = ingest(client, url).json()["manifest_id"]
+        confirmed = client.post(f"/manifest/{draft}/confirm", json={"agents": []}).json()
+
+        assert client.get(f"/manifest/{draft}").json()["status"] == "draft"
+        assert client.get(f"/manifest/{confirmed['manifest_id']}").json()["status"] == "confirmed"
+
+    def test_confirming_with_no_edits_keeps_the_discovered_agents(self, client, demo):
+        url, path = demo
+        drafted = ingest(client, url, (path / "constraints.yaml").read_text()).json()
+        confirmed_id = client.post(
+            f"/manifest/{drafted['manifest_id']}/confirm", json={"agents": []}
+        ).json()["manifest_id"]
+
+        assert client.get(f"/manifest/{confirmed_id}").json()["agents"] == drafted["agents"]
+
+    def test_confirming_applies_edits_from_the_review_screen(self, client, demo):
+        url, path = demo
+        drafted = ingest(client, url, (path / "constraints.yaml").read_text()).json()
+
+        edited = [dict(a) for a in drafted["agents"]]
+        for agent in edited:
+            if agent["id"] == "refund":
+                agent["constraints"] = {**agent["constraints"], "max_refund_usd": 25}
+
+        confirmed_id = client.post(
+            f"/manifest/{drafted['manifest_id']}/confirm", json={"agents": edited}
+        ).json()["manifest_id"]
+
+        stored = client.get(f"/manifest/{confirmed_id}").json()
+        refund = next(a for a in stored["agents"] if a["id"] == "refund")
+        assert refund["constraints"]["max_refund_usd"] == 25
+
+        # The draft still carries what discovery actually inferred.
+        original = client.get(f"/manifest/{drafted['manifest_id']}").json()
+        assert next(a for a in original["agents"] if a["id"] == "refund")[
+            "constraints"
+        ]["max_refund_usd"] == 100
+
+    def test_confirming_is_idempotent(self, client, demo):
+        url, _ = demo
+        draft = ingest(client, url).json()["manifest_id"]
+        first = client.post(f"/manifest/{draft}/confirm", json={"agents": []}).json()
+        second = client.post(f"/manifest/{draft}/confirm", json={"agents": []}).json()
+        assert first["manifest_id"] == second["manifest_id"]
+
+    def test_different_edits_produce_different_confirmed_manifests(self, client, demo):
+        url, path = demo
+        drafted = ingest(client, url, (path / "constraints.yaml").read_text()).json()
+        draft_id = drafted["manifest_id"]
+
+        first = client.post(f"/manifest/{draft_id}/confirm", json={"agents": []}).json()
+        edited = [dict(a) for a in drafted["agents"]]
+        edited[0] = {**edited[0], "purpose": "Edited purpose"}
+        second = client.post(f"/manifest/{draft_id}/confirm", json={"agents": edited}).json()
+
+        assert first["manifest_id"] != second["manifest_id"]
+
+    def test_confirming_an_unknown_manifest_is_404(self, client):
+        response = client.post("/manifest/mf_nope/confirm", json={"agents": []})
+        assert response.status_code == 404
+
+
+class TestAskParse:
+    """POST /ask/parse — plain language in, a proposed task out."""
+
+    def confirmed_manifest(self, client, demo) -> str:
+        url, path = demo
+        draft = ingest(client, url, (path / "constraints.yaml").read_text()).json()["manifest_id"]
+        return client.post(f"/manifest/{draft}/confirm", json={"agents": []}).json()["manifest_id"]
+
+    def ask(self, client, manifest_id, text):
+        return client.post("/ask/parse", json={"manifest_id": manifest_id, "text": text})
+
+    def test_returns_the_contracted_shape(self, client, demo):
+        manifest_id = self.confirmed_manifest(client, demo)
+        response = self.ask(client, manifest_id, "issue a refund for invoice 4482")
+        assert response.status_code == 200
+
+        body = response.json()
+        assert set(body) == {"agent_id", "task", "confidence"}
+        assert set(body["task"]) == {"title", "description", "priority", "expectation_criteria"}
+
+    def test_routes_a_refund_request_to_the_refund_agent(self, client, demo):
+        manifest_id = self.confirmed_manifest(client, demo)
+        body = self.ask(client, manifest_id, "Customer was charged twice, issue a refund").json()
+        assert body["agent_id"] == "refund"
+        assert body["confidence"] == "high"
+
+    def test_routes_a_classification_request_to_triage(self, client, demo):
+        manifest_id = self.confirmed_manifest(client, demo)
+        body = self.ask(client, manifest_id, "Classify this incoming request").json()
+        assert body["agent_id"] == "triage"
+
+    def test_never_proposes_an_agent_the_contract_gates(self, client, demo):
+        """escalation is direct_assignable: false, so /ask must not route to it."""
+        manifest_id = self.confirmed_manifest(client, demo)
+        body = self.ask(client, manifest_id, "escalate this to a human, create a ticket").json()
+        assert body["agent_id"] != "escalation"
+        assert body["confidence"] == "low", "an ungated match should not look confident"
+
+    def test_surfaces_the_contract_as_expectation_criteria(self, client, demo):
+        manifest_id = self.confirmed_manifest(client, demo)
+        body = self.ask(client, manifest_id, "refund invoice 4482").json()
+        assert "Refund amount ≤ $100, per contract" in body["task"]["expectation_criteria"]
+
+    def test_extracts_explicit_requirements_from_the_request(self, client, demo):
+        manifest_id = self.confirmed_manifest(client, demo)
+        body = self.ask(
+            client, manifest_id, "Issue a refund. Must respond within 2 minutes."
+        ).json()
+        assert any("within 2 minutes" in c for c in body["task"]["expectation_criteria"])
+
+    def test_detects_priority(self, client, demo):
+        manifest_id = self.confirmed_manifest(client, demo)
+        urgent = self.ask(client, manifest_id, "refund this urgently").json()
+        normal = self.ask(client, manifest_id, "refund this invoice").json()
+        assert urgent["task"]["priority"] == "high"
+        assert normal["task"]["priority"] == "medium"
+
+    def test_a_draft_manifest_is_rejected(self, client, demo):
+        """A draft governs nothing, so nothing may be assigned against it."""
+        url, _ = demo
+        draft = ingest(client, url).json()["manifest_id"]
+        response = self.ask(client, draft, "refund invoice 4482")
+        assert response.status_code == 409
+        assert response.json()["code"] == "manifest_not_confirmed"
+
+    def test_an_unknown_manifest_is_404(self, client):
+        assert self.ask(client, "mf_nope", "anything").status_code == 404

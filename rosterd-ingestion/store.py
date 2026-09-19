@@ -28,7 +28,7 @@ from pydantic import BaseModel, Field
 
 from config import MANIFEST_SCHEMA_VERSION, Settings
 from errors import ManifestNotFoundError
-from ingestion import AgentManifestEntry
+from ingestion import AgentManifestEntry, ManifestStatus
 from shared import GraphSpec
 
 
@@ -47,6 +47,28 @@ def _normalise_repo_url(repo_url: str) -> str:
 def lineage_id_for(repo_url: str) -> str:
     """Stable id for 'this repo', across every version of its manifest."""
     return "ln_" + sha256_text(_normalise_repo_url(repo_url))[:16]
+
+
+def _canonical_agents(agents: list[AgentManifestEntry]) -> str:
+    return json.dumps(
+        [a.model_dump(mode="json") for a in agents], sort_keys=True, separators=(",", ":")
+    )
+
+
+def compute_confirmed_manifest_id(draft_id: str, agents: list[AgentManifestEntry]) -> str:
+    """Content address for the confirmed form of a draft.
+
+    Confirming does not mutate the draft — it derives a new immutable manifest
+    whose id covers the draft it came from AND the exact agent list a human
+    approved. So confirming the same draft with the same edits twice is
+    idempotent, and the draft stays readable next to it for comparison.
+    """
+    payload = json.dumps(
+        {"draft": draft_id, "agents": _canonical_agents(agents), "status": "confirmed"},
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return "mf_" + sha256_text(payload)[:16]
 
 
 def compute_manifest_id(repo_url: str, commit_sha: str, constraints_sha: str) -> str:
@@ -76,6 +98,10 @@ class Provenance(BaseModel):
     schema_version: int = MANIFEST_SCHEMA_VERSION
     discovery_mode: str = "import"
     graph_located_via: str = ""
+    status: ManifestStatus = ManifestStatus.draft
+    #: For a confirmed manifest, the draft a human approved to produce it.
+    confirmed_from: str | None = None
+    confirmed_at: datetime | None = None
     supersedes: str | None = None
     superseded_by: str | None = None
     warnings: list[str] = Field(default_factory=list)
@@ -167,6 +193,8 @@ class ManifestStore:
         discovery_mode: str,
         graph_located_via: str,
         warnings: list[str],
+        status: ManifestStatus = ManifestStatus.draft,
+        confirmed_from: str | None = None,
     ) -> StoredManifest:
         """Persist a manifest, assigning it a version within its repo lineage.
 
@@ -194,6 +222,9 @@ class ManifestStore:
                 constraints_sha256=constraints_sha,
                 discovery_mode=discovery_mode,
                 graph_located_via=graph_located_via,
+                status=status,
+                confirmed_from=confirmed_from,
+                confirmed_at=datetime.now(timezone.utc) if confirmed_from else None,
                 supersedes=predecessor,
                 warnings=warnings,
             ),
@@ -213,6 +244,7 @@ class ManifestStore:
             "constraints_sha256": constraints_sha,
             "schema_version": MANIFEST_SCHEMA_VERSION,
             "agent_count": len(agents),
+            "status": status.value,
             "superseded_by": None,
         }
         # The previous version stays readable, but is marked as no longer latest.
@@ -228,3 +260,40 @@ class ManifestStore:
             )
 
         return record
+
+    # -------------------------------------------------------------- confirming
+
+    def confirm(
+        self, draft_id: str, agents: list[AgentManifestEntry] | None = None
+    ) -> StoredManifest:
+        """Approve a manifest, optionally replacing its agent list.
+
+        Derives a NEW immutable manifest rather than flipping a flag on the
+        draft. Two reasons: it keeps ADR-001's guarantee that a pinned
+        manifest_id never changes underneath a running kernel, and it preserves
+        both sides of the trust boundary — what discovery inferred and what a
+        human actually approved stay separately readable and diffable.
+
+        Idempotent: confirming the same draft with the same agents returns the
+        existing confirmed manifest.
+        """
+        draft = self.get(draft_id)
+        final_agents = list(agents) if agents else list(draft.agents)
+
+        confirmed_id = compute_confirmed_manifest_id(draft_id, final_agents)
+        if self.exists(confirmed_id):
+            return self.get(confirmed_id)
+
+        return self.save(
+            manifest_id=confirmed_id,
+            agents=final_agents,
+            graph=draft.graph,
+            repo_url=draft.provenance.repo_url,
+            commit_sha=draft.provenance.commit_sha,
+            constraints_sha=draft.provenance.constraints_sha256,
+            discovery_mode=draft.provenance.discovery_mode,
+            graph_located_via=draft.provenance.graph_located_via,
+            warnings=list(draft.provenance.warnings),
+            status=ManifestStatus.confirmed,
+            confirmed_from=draft_id,
+        )

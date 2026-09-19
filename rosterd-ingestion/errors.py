@@ -70,3 +70,17 @@ class ManifestNotFoundError(IngestError):
 
     status_code = 404
     code = "manifest_not_found"
+
+
+class ManifestNotConfirmedError(IngestError):
+    """/ask/parse was given a draft manifest. A draft governs nothing."""
+
+    status_code = 409
+    code = "manifest_not_confirmed"
+
+
+class NoAssignableAgentError(IngestError):
+    """No agent in the manifest is directly assignable."""
+
+    status_code = 422
+    code = "no_assignable_agent"
