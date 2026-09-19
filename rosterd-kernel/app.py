@@ -161,7 +161,6 @@ def create_app(settings: Settings | None = None, *, container: Container | None 
     async def lifespan(_app: FastAPI):
         container.manifest_subscription.start()
         container.scaler.start()
-        container.telemetry.instrument_app(_app)
         logger.info("kernel started: site=%s docker_mode=%s", settings.site_id, settings.docker_mode)
         yield
         container.scaler.stop()
@@ -182,6 +181,15 @@ def create_app(settings: Settings | None = None, *, container: Container | None 
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    # Must happen here, at app-construction time, not inside the lifespan
+    # startup handler: Starlette builds its middleware stack lazily on the
+    # very first ASGI call, and that first call *is* the lifespan startup
+    # event itself. Instrumenting from inside lifespan silently wraps
+    # nothing -- HTTP spans just never get created, with no error anywhere
+    # to point at it (caught the hard way: metrics were flowing to the
+    # collector, but Jaeger showed zero services until this moved here).
+    container.telemetry.instrument_app(fastapi_app)
 
     @fastapi_app.exception_handler(KernelError)
     async def handle_kernel_error(_: Request, exc: KernelError) -> JSONResponse:
