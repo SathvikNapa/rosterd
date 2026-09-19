@@ -1,0 +1,97 @@
+# rosterd — local dev / demo compose.
+#
+# Owned end-to-end by Person 1 (kernel): "stand up the otel-collector +
+# Jaeger containers in compose, define the naming conventions the rest of
+# the team follows" (rosterd-sathvik-kernel.md). Only the pieces that
+# actually exist in this repo today are wired up as real services --
+# ingestion, coordinator, the frontend, and the demo-agent image are each
+# that teammate's own build; the commented blocks below are where they
+# plug in, not a promise about their shape.
+#
+# Quick start:
+#   docker compose up --build
+#   open http://localhost:16686        # Jaeger UI
+#   curl  http://localhost:8100/healthz
+#
+# The kernel defaults to ROSTERD_KERNEL_DOCKER_MODE=fake here, same as
+# scripts/run.sh, so `docker compose up` works before Shruti's demo-agent
+# image exists and without mounting the host's Docker socket. Flip to
+# `real` (and uncomment the docker.sock mount + rosterd-site-a network)
+# once that image is built. See rosterd-kernel/README.md.
+
+networks:
+  rosterd-backend:
+    driver: bridge
+  # One isolated network per site; the kernel is the only thing on it
+  # that can also reach rosterd-backend (per the brief's isolation
+  # requirement -- only the kernel can reach that site's agent pool).
+  rosterd-site-a:
+    driver: bridge
+    internal: true
+
+services:
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.111.0
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    volumes:
+      - ./rosterd-kernel/otel-collector-config.yaml:/etc/otel-collector-config.yaml:ro
+    ports:
+      - "4317:4317" # OTLP gRPC
+      - "4318:4318" # OTLP HTTP
+    networks: [rosterd-backend]
+    depends_on: [jaeger]
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.62
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "16686:16686" # UI
+    networks: [rosterd-backend]
+
+  kernel-site-a:
+    build: ./rosterd-kernel
+    environment:
+      ROSTERD_SITE_ID: site-a
+      ROSTERD_KERNEL_OTEL_ENDPOINT: http://otel-collector:4318
+      ROSTERD_KERNEL_DOCKER_MODE: fake
+      ROSTERD_KERNEL_FAKE_AGENT_URL: http://demo-agent-site-a:8000
+      # ROSTERD_KERNEL_DOCKER_NETWORK: rosterd-site-a          # real mode only
+      ROSTERD_KERNEL_INGESTION_URL: http://ingestion:8000
+      ROSTERD_KERNEL_MANIFEST_ID: ${ROSTERD_MANIFEST_ID:-}     # set after POST /ingest
+      ROSTERD_KERNEL_COORDINATOR_URL: http://coordinator:8300
+      # ROSTERD_KERNEL_SPACETIMEDB_URL: http://spacetimedb:3000   # Joy's module
+      # ROSTERD_KERNEL_SPACETIMEDB_MODULE: rosterd
+    ports:
+      - "8100:8100"
+    networks: [rosterd-backend, rosterd-site-a]
+    depends_on: [otel-collector]
+    # Real Docker mode needs the host socket mounted so this container can
+    # start/kill its own sibling demo-agent containers:
+    # volumes:
+    #   - /var/run/docker.sock:/var/run/docker.sock
+
+  # ---------------------------------------------------------------------
+  # Plug in as each teammate's service gets a Dockerfile. Left commented,
+  # not stubbed, so `docker compose up` stays green with only the kernel's
+  # own pieces until they land.
+  # ---------------------------------------------------------------------
+
+  # ingestion:
+  #   build: ./rosterd-ingestion
+  #   ports: ["8000:8000"]
+  #   networks: [rosterd-backend]
+
+  # coordinator:
+  #   build: ./rosterd-coordinator
+  #   ports: ["8300:8300"]
+  #   networks: [rosterd-backend]
+
+  # demo-agent-site-a:
+  #   build: ./rosterd-demo-agent
+  #   networks: [rosterd-site-a]     # only reachable by kernel-site-a
+
+  # frontend:
+  #   build: ./rosterd-frontend
+  #   ports: ["3000:3000"]
+  #   networks: [rosterd-backend]
