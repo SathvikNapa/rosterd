@@ -247,6 +247,16 @@ fixture. Two things that reading the code alone didn't catch:
    misdirection scenario, working end to end against ingestion's real
    output, not a hand-built test fixture.
 
+**Update once `rosterd-demo-agent` (Shruti's real service) landed:**
+`legacy_constraints.py`'s map targeted the ingestion fixture's tool arg
+(`amount_usd`) above because that's the only demo-agent that existed when
+this was verified. The real service names the same arg `amount`
+(`issue_refund(order_id: str, amount: float)`, per her spec) -- since a
+kernel is only ever pointed at one real demo-agent for a given site, never
+at ingestion's own discovery fixture, the map now targets
+`tool_calls[*].args.amount` instead. `tests/test_legacy_constraints.py` pins
+this explicitly so it can't silently drift back.
+
 Also caught in the same pass: the brief names three custom spans
 (`dispatch`, `constraint_check`, `scale_decision`); `constraint_check` had
 been missed entirely. Fixed, with a regression test

@@ -1,0 +1,51 @@
+# Reference constraints.yaml for the e-commerce demo agent.
+#
+# NOT read automatically by rosterd-ingestion: POST /ingest takes
+# `constraints_yaml` as a string in the request body (see
+# rosterd-ingestion/ingestion.py IngestRequest / app.py post_ingest), it does
+# not go looking for a file in the cloned repo. This file is the canonical
+# copy to paste into that request (or into scripts/probe.py-style testing),
+# kept in-repo so it can't drift from the node names below -- same pattern
+# rosterd-ingestion/demo-agent/constraints.yaml uses for its own fixture.
+#
+# Node names must match graph.py/refund_node.py exactly (order_intake,
+# fulfillment, refund_exception); ingestion rejects the file otherwise.
+# Reserved keys (purpose, direct_assignable, entry_only_via, tools, id) shape
+# the manifest entry; every other key passes through to the kernel as a
+# runtime constraint (see rosterd-ingestion/constraints_loader.py).
+#
+# KNOWN GAP (flag for Param/Sathvik, not fixed here -- out of scope for
+# rosterd-demo-agent/): the value below, `max_refund_usd: 100`, lands in
+# ingestion's own AgentConstraints model (ingestion.py) as a flat field.
+# rosterd-kernel/constraints.py's evaluator, though, reads a LIST of
+# ConstraintRule objects with a dot-path `field` like
+# "tool_calls[*].args.amount" (see rosterd-kernel/manifest.py's
+# ConstraintRule) -- nothing in this repo today turns the flat
+# `max_refund_usd` into that structured rule, and rosterd-kernel/manifest.py
+# says as much: ingestion's committed AgentManifestEntry.constraints and the
+# kernel's expected shape have not converged. Until one side adds that
+# translation (or a shim), a confirmed manifest for this repo will not
+# actually make the kernel check `amount <= 100` against our /invoke
+# responses, even though this file says the cap is 100. The tool-schema cap
+# is still enforced *inside* the demo agent's own process either way
+# (tools.py's Field(le=100) rejects the call; see toolrun.py) -- what's
+# missing is the kernel-side check the misdirection demo is supposed to
+# showcase.
+version: 1
+
+constraints:
+  order_intake:
+    purpose: Classifies an incoming order as standard, high-value, or fraud-flagged
+    direct_assignable: true
+
+  fulfillment:
+    purpose: Reserves inventory for a standard/high-value order
+    direct_assignable: true
+    max_qty: 50   # mirrors tools.ReserveInventoryArgs.qty = Field(le=50)
+
+  refund_exception:
+    purpose: Issues refunds; calls interrupt() for fraud-flagged/high-value orders
+    direct_assignable: false   # interrupt() in refund_node.py is the reason: needs a human
+    entry_only_via: [order_intake]   # the fraud_flagged edge; __start__->refund_exception also
+                                      # exists for direct kernel/coordinator dispatch (see graph.py)
+    max_refund_usd: 100        # mirrors tools.IssueRefundArgs.amount = Field(le=100)

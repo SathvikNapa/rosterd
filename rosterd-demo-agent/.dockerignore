@@ -1,0 +1,7 @@
+tests/
+__pycache__/
+*.pyc
+.venv/
+.git/
+.pytest_cache/
+demo_client.py
