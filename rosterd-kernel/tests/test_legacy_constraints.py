@@ -24,7 +24,7 @@ class TestAdaptLegacyConstraints:
     def test_known_key_becomes_a_constraint_rule_dict(self):
         rules = adapt_legacy_constraints({"max_refund_usd": 100.0})
         assert rules == [
-            {"field": "tool_calls[*].args.amount_usd", "op": "lte", "value": 100.0, "source": "default", "confidence": "low"}
+            {"field": "tool_calls[*].args.amount", "op": "lte", "value": 100.0, "source": "default", "confidence": "low"}
         ]
 
     def test_none_valued_keys_are_dropped(self):
@@ -41,10 +41,21 @@ class TestAdaptLegacyConstraints:
     def test_the_resulting_dicts_construct_real_constraint_rules(self):
         rules = adapt_legacy_constraints({"max_refund_usd": 50})
         rule = ConstraintRule.model_validate(rules[0])
-        assert rule.field == "tool_calls[*].args.amount_usd"
+        assert rule.field == "tool_calls[*].args.amount"
         assert rule.op == "lte"
         assert rule.value == 50
         assert rule.confidence == "low"
+
+    def test_map_targets_rosterd_demo_agents_arg_name_not_the_ingestion_fixtures(self):
+        """rosterd-demo-agent (Shruti's real service) names the refund tool's
+        arg `amount`; rosterd-ingestion/demo-agent/tools.py's bundled
+        discovery fixture names it `amount_usd`. Only the former is ever the
+        service a real kernel is configured against, so the default map
+        targets it -- this pins that choice so a future edit back to
+        `amount_usd` (e.g. someone "fixing" this to match the fixture) fails
+        loudly instead of silently breaking the misdirection demo."""
+        rule = DEFAULT_LEGACY_CONSTRAINT_MAP["max_refund_usd"]
+        assert rule.field == "tool_calls[*].args.amount"
 
 
 class TestAgentManifestEntryValidator:
@@ -60,7 +71,7 @@ class TestAgentManifestEntryValidator:
             }
         )
         assert len(entry.constraints) == 1
-        assert entry.constraints[0].field == "tool_calls[*].args.amount_usd"
+        assert entry.constraints[0].field == "tool_calls[*].args.amount"
         assert entry.constraints[0].value == 100.0
 
     def test_an_already_finalized_list_shape_passes_through_unchanged(self):

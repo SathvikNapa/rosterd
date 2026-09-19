@@ -13,13 +13,22 @@ This is deliberately narrow, not a generic solver: it maps *known,
 named* legacy keys to a field path, by hand, because there is no way to
 derive "which tool argument does max_refund_usd constrain" from the flat
 number alone -- that's domain knowledge about a specific demo-agent's tool
-schema, not something inferable from `{"max_refund_usd": 100}`. The one
-entry below matches the bundled `rosterd-ingestion/demo-agent/tools.py`
-fixture's `issue_refund(invoice_id: str, amount_usd: float)` exactly.
-Shruti's real demo-agent (not yet in this repo) uses a *different* tool arg
-name per her own brief (`amount`, not `amount_usd`) -- this map will need a
-one-line update once her service exists, which is exactly why it's a
-constant here, not something spread across the parsing code.
+schema, not something inferable from `{"max_refund_usd": 100}`. That's
+exactly why it's a constant here, not something spread across the parsing
+code: whichever demo-agent a site is actually pointed at, this is the one
+place to repoint it.
+
+Updated for `rosterd-demo-agent` (Shruti's real service, now in this repo):
+her `issue_refund(order_id: str, amount: float)` names the arg `amount`,
+not `amount_usd` -- the field path below was changed to match. The earlier
+value (`tool_calls[*].args.amount_usd`) matched
+`rosterd-ingestion/demo-agent/tools.py`'s bundled discovery fixture, which
+is exercised by ingestion's own probe/discovery tests but is not the
+service any real kernel is ever configured against
+(`ROSTERD_KERNEL_FAKE_AGENT_URL` / the real Docker network point at
+`rosterd-demo-agent`, never at ingestion's fixture) -- see the README's
+"Verified against the real ingestion service" section for the run that
+used the old value, and the note just below it for this change.
 
 `confidence` is deliberately `low` for every legacy-adapted rule (never
 `high`, which `manifest.py`'s own `ConstraintRule` reserves for a real
@@ -58,10 +67,10 @@ class LegacyMapping:
     op: Literal["lte", "gte", "eq", "in", "not_in"]
 
 
-#: Edit this to match whatever demo-agent fixture is actually running.
+#: Edit this to match whatever demo-agent is actually running.
 #: Keyed by the legacy AgentConstraints field name.
 DEFAULT_LEGACY_CONSTRAINT_MAP: dict[str, LegacyMapping] = {
-    "max_refund_usd": LegacyMapping(field="tool_calls[*].args.amount_usd", op="lte"),
+    "max_refund_usd": LegacyMapping(field="tool_calls[*].args.amount", op="lte"),
 }
 
 #: Keys that are known to NOT be per-response constraints (see module
