@@ -205,7 +205,11 @@ class Dispatcher:
 
         violation = self._budget_tracker.check(run_id)
         if violation is None:
-            violation = evaluate_all(entry.constraints, response, policy=self._policy_store)
+            with self._telemetry.span(
+                "constraint_check", **{"rosterd.agent_id": request.agent_id, "rosterd.rule_count": len(entry.constraints)}
+            ) as constraint_span:
+                violation = evaluate_all(entry.constraints, response, policy=self._policy_store)
+                constraint_span.set_attribute("rosterd.violated", violation is not None)
 
         if violation is not None:
             self._finish_killed(run_id, request.agent_id, instance, violation, span)

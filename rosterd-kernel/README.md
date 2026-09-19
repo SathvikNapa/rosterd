@@ -18,7 +18,7 @@ frontend ──> kernel-service ──> demo-agent-service × pool (same site on
 ```bash
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 ./scripts/run.sh                 # serves on :8100, /docs for the API explorer
-.venv/bin/python -m pytest       # 48 tests, no Docker/SpacetimeDB/collector needed
+.venv/bin/python -m pytest       # 53 tests, no Docker/SpacetimeDB/collector needed
 ```
 
 Nothing above needs Docker, SpacetimeDB, Param's ingestion service, or an
@@ -194,6 +194,38 @@ A few places where the brief left room for judgment, called out explicitly
   in the brief's schema, only `started_at`), so the scaler approximates
   idle duration from instance age. Fine for the demo's 15-30s cooldown; a
   longer-lived deployment would want a real field for it.
+
+## Verified against the real ingestion service
+
+Beyond the test suite, this was checked against a live, running
+`rosterd-ingestion` (not just the brief's schema): ran its own 133 tests,
+then a real `POST /ingest` → `POST /manifest/{id}/confirm` → the kernel
+polling `GET /manifest/{id}` round trip against the bundled `demo-agent`
+fixture. Two things that reading the code alone didn't catch:
+
+1. **A draft manifest was silently accepted and made live** --
+   `ManifestSubscription` never checked `document.status`, so a
+   schema-valid draft governed dispatch exactly like a confirmed one would,
+   directly contradicting the brief's trust boundary ("a draft manifest
+   governs nothing"). Fixed: `poll_once()` now refuses anything that isn't
+   `status: confirmed`, same as it already refused `None`. Regression
+   tests in `tests/test_manifest_source.py`.
+2. **A real confirmed manifest fails Pydantic validation outright.**
+   Ingestion's `AgentManifestEntry.constraints` is still a free-form
+   `{max_refund_usd, requires_prior_node, ...}` object; this kernel
+   implements the finalized brief's `list[ConstraintRule]`
+   (field/op/value/source/confidence). The mismatch is logged loudly (a
+   full traceback, `WARNING`) rather than crashing the kernel, but no real
+   ingestion output loads today. Not something to unilaterally paper over
+   here with a guessed field-path mapping (see "Notes for the team" above)
+   -- it needs Param's `AgentManifestEntry` to move to the shape his own
+   brief and this kernel's contract already agree on.
+
+Also caught in the same pass: the brief names three custom spans
+(`dispatch`, `constraint_check`, `scale_decision`); `constraint_check` had
+been missed entirely. Fixed, with a regression test
+(`tests/test_tracing_spans.py`) that asserts the actual span names a
+dispatch and a scaler tick request, not just that tracing doesn't crash.
 
 ## Known limitations
 

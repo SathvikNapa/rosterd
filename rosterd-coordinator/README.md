@@ -25,7 +25,7 @@ team" below for exactly where the seams are.
 ```bash
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 ./scripts/run.sh                 # serves on :8300, /docs for the API explorer
-.venv/bin/python -m pytest       # 35 tests, no SpacetimeDB/kernel/collector needed
+.venv/bin/python -m pytest       # 34 tests, no SpacetimeDB/kernel/collector needed
 ```
 
 Nothing above needs a live kernel, SpacetimeDB, or OTel collector --
@@ -151,7 +151,7 @@ Same spirit as `rosterd-ingestion` and `rosterd-kernel`'s own READMEs:
 
 ## Verified
 
-- 35 tests (`pytest`) -- pattern detection (site-threshold, cooldown,
+- 34 tests (`pytest`) -- pattern detection (site-threshold, cooldown,
   window pruning, lte/gte tightening math, non-numeric ops), site
   status/score derivation, the broadcaster's fan-out/exclusion/best-effort
   behavior, and the full HTTP contract.
