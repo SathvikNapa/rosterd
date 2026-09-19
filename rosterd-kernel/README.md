@@ -18,7 +18,7 @@ frontend ──> kernel-service ──> demo-agent-service × pool (same site on
 ```bash
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 ./scripts/run.sh                 # serves on :8100, /docs for the API explorer
-.venv/bin/python -m pytest       # 66 tests, no Docker/SpacetimeDB/collector needed
+.venv/bin/python -m pytest       # 68 tests, no Docker/SpacetimeDB/collector needed
 ```
 
 Nothing above needs Docker, SpacetimeDB, Param's ingestion service, or an
@@ -276,6 +276,65 @@ body via a mocked transport, and re-verified for real: called
 `HttpReducerSpacetimeWriter.write_agent` / `.write_agent_metrics` directly
 against the actual `docker compose` stack's `spacetimedb` service and
 confirmed both rows landed via `spacetime sql`.
+
+## Verified against the real demo-agent
+
+Ingested `rosterd-demo-agent` (Shruti's real service, not a fixture) via a
+live `/ingest` → confirm → poll round trip, started it for real, and
+dispatched real tasks through the kernel at it end to end.
+
+1. **`fulfillment`'s `max_qty` constraint was declared in the manifest and
+   never enforced.** `constraints.yaml` sets `max_qty: 50` on `fulfillment`
+   (mirrors `tools.ReserveInventoryArgs.qty = Field(le=50)`), and ingestion
+   correctly surfaces it in the confirmed manifest — but
+   `legacy_constraints.py`'s `DEFAULT_LEGACY_CONSTRAINT_MAP` only had an
+   entry for `max_refund_usd`, so `max_qty` was silently dropped (logged at
+   debug, never surfaced). Confirmed live: dispatching a 200-unit reserve
+   directly at `fulfillment` came back `status: done, violation: null`.
+   **Fixed:** added `"max_qty": LegacyMapping(field="tool_calls[*].args.qty",
+   op="lte")`. Re-verified live afterward: the same dispatch now comes back
+   `status: killed`, `violation.rule == "tool_calls[*].args.qty lte 50"`,
+   and the event shows up correctly in the coordinator and in SpacetimeDB's
+   `events` table with the violation payload intact. Regression test:
+   `tests/test_legacy_constraints.py::test_max_qty_becomes_a_constraint_rule_dict`.
+
+2. **Dispatching through `order_intake` doesn't enforce whatever node its
+   internal routing actually lands on — known limitation, not fixed.**
+   `dispatch.py` resolves `entry = manifest_index.get(request.agent_id)`
+   and checks `entry.constraints` — the constraints of the *dispatched*
+   agent, not whichever LangGraph node the demo-agent's own internal
+   routing ends up calling a tool from. `order_intake` has no constraints
+   of its own (it never calls a tool directly) and always routes
+   internally to either `fulfillment` or `refund_exception`; dispatching
+   through it means the entry actually responsible for the tool call
+   (`fulfillment`, say) never has its constraints checked at all. Point 1
+   above only showed up as a live violation when dispatched straight at
+   `fulfillment`; the identical over-limit request through `order_intake`
+   silently passes. The kernel's contract is "check the dispatched agent's
+   constraints," which is what it does — this is a real modeling gap
+   between that flat per-agent model and LangGraph's actual multi-node
+   internal routing, not a bug in the check itself, and not something to
+   guess a fix at unilaterally.
+
+3. **`refund_exception`'s `max_refund_usd` constraint is real and mapped
+   correctly (see the ingestion-service section above), but is currently
+   unreachable through any live dispatch — known limitation, not fixed.**
+   `refund_exception` is `direct_assignable: false`, so it can only be
+   reached via `order_intake`'s `fraud_flagged` routing branch — and
+   `refund_node.py`'s `interrupt()` fires unconditionally whenever
+   `order_class` is `fraud_flagged` (the same branch that's the *only* way
+   to arrive there). The response comes back as a pending-approval message
+   with empty `tool_calls`, which trivially passes constraint checking
+   (nothing to check) and finishes the run as `done`. There is no
+   `/resume` anywhere in this kernel — `DemoAgentClient` only ever calls
+   `/invoke`, never demo-agent's `/resume` — so a paused run has no path
+   forward. The misdirection-refund demo this whole system's narrative
+   leans on is not reachable end to end today without adding real
+   human-in-the-loop resume support to the kernel, which is a genuine
+   feature addition (new endpoint, a way to recover `thread_id` from
+   demo-agent's response, re-running the same post-response constraint
+   check after resuming), not a bug fix — flagging it here rather than
+   guessing at that design unprompted.
 
 ## Known limitations
 

@@ -71,6 +71,16 @@ class LegacyMapping:
 #: Keyed by the legacy AgentConstraints field name.
 DEFAULT_LEGACY_CONSTRAINT_MAP: dict[str, LegacyMapping] = {
     "max_refund_usd": LegacyMapping(field="tool_calls[*].args.amount", op="lte"),
+    # rosterd-demo-agent's constraints.yaml declares this on `fulfillment`
+    # (mirrors tools.ReserveInventoryArgs.qty = Field(le=50)); AgentConstraints'
+    # extra="allow" lets it through ingestion, but nothing mapped it to a
+    # field path until now -- confirmed live (dispatch a 200-unit reserve
+    # through the real kernel + rosterd-demo-agent: `status: done,
+    # violation: null` with this key absent from the map). Unlike
+    # max_refund_usd, this one's reachable through a live, un-interrupted
+    # dispatch (fulfillment_node has no interrupt() gate), so it's the
+    # constraint a real demo can actually trigger end to end.
+    "max_qty": LegacyMapping(field="tool_calls[*].args.qty", op="lte"),
 }
 
 #: Keys that are known to NOT be per-response constraints (see module

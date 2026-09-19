@@ -57,6 +57,21 @@ class TestAdaptLegacyConstraints:
         rule = DEFAULT_LEGACY_CONSTRAINT_MAP["max_refund_usd"]
         assert rule.field == "tool_calls[*].args.amount"
 
+    def test_max_qty_becomes_a_constraint_rule_dict(self):
+        """rosterd-demo-agent's constraints.yaml declares `max_qty: 50` on
+        `fulfillment` (mirrors tools.ReserveInventoryArgs.qty = Field(le=50)).
+        Found unmapped by a live dispatch: a 200-unit reserve request through
+        the real kernel + rosterd-demo-agent came back `status: done,
+        violation: null` -- the manifest carried the constraint, nothing
+        enforced it. Unlike max_refund_usd (gated behind refund_exception's
+        interrupt(), unreachable without a /resume the kernel doesn't have),
+        fulfillment has no interrupt gate, so this is the constraint a live
+        demo can actually trigger end to end."""
+        rules = adapt_legacy_constraints({"max_qty": 50})
+        assert rules == [
+            {"field": "tool_calls[*].args.qty", "op": "lte", "value": 50, "source": "default", "confidence": "low"}
+        ]
+
 
 class TestAgentManifestEntryValidator:
     def test_a_legacy_dict_shaped_constraints_field_is_adapted_on_construction(self):
@@ -98,5 +113,9 @@ class TestAgentManifestEntryValidator:
         assert entry.constraints[0].source == "schema"
         assert entry.constraints[0].confidence == "high"
 
-    def test_default_map_only_recognizes_the_bundled_fixtures_key(self):
-        assert set(DEFAULT_LEGACY_CONSTRAINT_MAP) == {"max_refund_usd"}
+    def test_default_map_recognizes_exactly_the_keys_rosterd_demo_agent_declares(self):
+        """rosterd-demo-agent/constraints.yaml declares two legacy-shaped
+        constraint keys (max_refund_usd on refund_exception, max_qty on
+        fulfillment) -- both need a field mapping or the kernel silently
+        stops enforcing them, as max_qty did until this was added."""
+        assert set(DEFAULT_LEGACY_CONSTRAINT_MAP) == {"max_refund_usd", "max_qty"}
