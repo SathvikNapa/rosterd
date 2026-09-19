@@ -4,7 +4,9 @@
 
 rosterd takes an existing LangGraph agent system and turns it into
 something you can safely run, schedule work against by talking to it
-plainly, and operate at scale across multiple isolated sites.
+plainly, scale automatically under load, and operate at scale across
+multiple isolated sites, with the same telemetry story a real
+platform team would expect.
 
 - **Discover**: statically read the repo, no constraints file to
   write by hand. Tool argument schemas, conditional edges, and
@@ -20,23 +22,29 @@ plainly, and operate at scale across multiple isolated sites.
 - **Scale**: agents are pods. A load spike on one agent (a flash sale
   hitting Fulfillment) grows that agent's pool automatically, and
   shrinks it back down after, the same way Kubernetes scales
-  replicas, except the replicas are agent instances.
+  replicas, except the replicas are agent instances. A Monitor screen
+  shows the actual scaling decision, not just the outcome.
 - **Federate**: run the same roster at multiple sites. Sites share
   only scores and failure patterns with a thin coordinator, never
   task content. A failure caught at one site pushes a policy update
   to the others.
+- **Observe**: every dispatch is a distributed trace, every scaling
+  decision is an exported metric. SpacetimeDB gives you the live
+  in-app view, OpenTelemetry gives you the standards-based export any
+  downstream stack (Grafana, Honeycomb, Datadog) can ingest without
+  knowing rosterd's schema.
 
 Two tracks this build speaks to directly: **SpacetimeDB** (live,
-multiplayer state for both the manifest and the autoscaling pool, not
-an incidental data layer) and **Auctor** (the Ask screen is a literal
-conversation-to-action flow, and ingestion itself turns an
-unstructured repo into a structured, confirmed contract).
+multiplayer state for the manifest, the autoscaling pool, and the
+scaling-decision metrics, not an incidental data layer) and
+**Auctor** (the Ask screen is a literal conversation-to-action flow,
+and ingestion itself turns an unstructured repo into a structured,
+confirmed contract).
 
 Demo domain: **e-commerce order fulfillment**, three agents (Order
 Intake, Fulfillment, Refund/Exception), because it gives autoscaling
 a real trigger (flash sale) and gives ingestion real schema signal to
-infer from (a refund cap and a stock check are naturally typed fields
-in the tool code, not invented for the demo).
+infer from.
 
 ## Architecture
 
@@ -46,36 +54,52 @@ frontend ──┬──> ingestion-service   (repo → draft manifest → Space
            ├──> kernel-service × N  (one per site, subscribes to its
            │                         site's CONFIRMED manifest only)
            ├──> coordinator-service (federation)
-           └──> SpacetimeDB         (subscribed directly: manifests, dashboard tables)
+           └──> SpacetimeDB         (subscribed directly: manifests,
+                                      dashboard tables, agent_metrics)
 
 kernel-service ──> demo-agent-service × pool   (same site, kernel is the only thing that can reach it)
-kernel-service ──> coordinator-service         (posts run events, incl. pool scale events)
+kernel-service ──> coordinator-service         (posts run + scale events)
 coordinator-service ──> kernel-service         (pushes policy updates back)
 coordinator-service ──> SpacetimeDB            (writes dashboard tables via reducers)
+
+all services ──> otel-collector ──> Jaeger (traces) + metrics backend
 ```
 
 Each site is one Docker network containing its kernel and a pool of
-demo agent containers for that site (one container per active agent
-instance, scaled up or down by the kernel). The kernel is the only
-thing in that network allowed to reach the agents, and the only thing
-allowed to leave it, toward the coordinator.
+demo agent containers for that site. The kernel is the only thing in
+that network allowed to reach the agents, and the only thing allowed
+to leave it, toward the coordinator.
 
-**No constraints.yaml.** Ingestion parses the repo's tool argument
-schemas (typed field limits), conditional edge functions (routing),
-and `interrupt()` calls (approval gates) to produce a manifest with
-every rule tagged by where it came from (`schema`, `code`, `default`)
-and a confidence level. This is written to SpacetimeDB as `draft`. A
-human reviews it on the Review screen and confirms it, only then does
-any kernel subscribe to and enforce it. Auto-inferred, human-gated,
-not hand-typed.
+**No constraints.yaml.** Ingestion parses tool argument schemas,
+conditional edge functions, and `interrupt()` calls to produce a
+manifest with every rule tagged by source and confidence, written to
+SpacetimeDB as `draft`. A human confirms it on the Review screen
+before any kernel enforces it.
 
-SpacetimeDB is scoped to three things: manifest distribution
-(ingestion writes, kernel and frontend subscribe, live propagation on
-re-ingest), the federation dashboard (agents/tasks/sites/events, live
-for every viewer), and the autoscaling pool itself, each running
-agent instance is a row, so "watch the pool grow and shrink" is a
-subscription, not a poll. Point-to-point calls between services
-(dispatch, constraint checks, policy push) stay plain REST.
+SpacetimeDB is scoped to four things: manifest distribution, the
+federation dashboard, the autoscaling pool (`agents`, one row per
+running instance), and `agent_metrics` (load vs desired replicas per
+tick, feeding the Monitor screen's live sparkline). Point-to-point
+calls between services stay plain REST.
+
+**Observability**: every service is OTel-instrumented, trace context
+propagates across the whole dispatch chain (kernel → demo agent →
+coordinator), so a killed run is a single traceable path with the
+violation as a span attribute, not just a UI card. The kernel also
+exports the same scaling numbers (`rosterd.agent.replicas`,
+`rosterd.agent.load`, `rosterd.agent.desired_replicas`) as OTel
+metrics, so an external Grafana dashboard could plot the same
+autoscaling curve the in-app Monitor screen shows. SpacetimeDB is the
+live in-app view, OTel is the standards-based export, two layers,
+not a duplicate of the same thing.
+
+**Debug mode**: the kernel threads its dispatch span's `trace_id`
+through `RunResponse` and every `EventRequest` it posts, the
+coordinator stores it on the event, and the frontend renders a
+one-click "View trace" link wherever that event appears (Federation's
+activity feed, the Task Run & Violation screen). A violation in the
+UI is one click from its exact Jaeger span, not a manual search by
+timestamp in a separate tool.
 
 Shared schema reference: the five Pydantic files already shared
 (`shared.py`, `ingestion.py`, `kernel.py`, `demo_agent.py`,
@@ -86,236 +110,230 @@ types can't drift apart between services.
 
 | Person | Owns |
 |---|---|
-| 1 (Sathvik) | Kernel service — dispatch, constraint checks, kill switch, autoscaling, policy updates |
-| 2 | Ingestion service — repo introspection, auto-inference, manifest confirm flow, `/ask/parse` |
-| 3 | Coordinator service, SpacetimeDB dashboard + pool tables, frontend (Ingest, Review, Ask, Roster, Contracts, Federation) |
-| 4 | Demo agentic system (e-commerce LangGraph) and its Docker image |
+| 1 (Sathvik) | Kernel service — dispatch, constraint checks, kill switch, autoscaling, policy updates, OTel collector + tracing conventions |
+| 2 (Param) | Ingestion service — repo introspection, auto-inference, manifest confirm flow, `/ask/parse` |
+| 3 (Joy) | Coordinator service, SpacetimeDB (dashboard + pool + metrics tables), frontend (7 screens) |
+| 4 (Shruti) | Demo agentic system (e-commerce LangGraph) and its Docker image |
 
-Build order: Person 4's demo agent needs real, typed tool schemas
-early, since Person 2's inference has nothing to infer from
-otherwise, this is the first dependency to unblock. Person 2's
-manifest shape (including `source`/`confidence` per rule and the
-`scaling` field) should be nailed down next, Person 1's kernel and
-Person 3's Contracts/Review screens both build against it. Person 3
-can build every screen against fake data from the start and swap in
-real subscriptions once Person 1 and 2 are producing real events.
+Build order: Shruti's demo agent needs real, typed tool schemas
+early, Param's inference has nothing to infer from otherwise. Param's
+manifest shape should be nailed down next. Joy should stand up the
+SpacetimeDB module (including `agents` as one row per instance,
+before Sathvik's scaler has anywhere to write pool changes) and the
+OTel collector + Jaeger container early, both are shared
+infrastructure everyone else's instrumentation depends on existing.
+Joy can build every screen against fake data first and swap in real
+subscriptions once Sathvik and Param are producing real events.
 
 ---
 
 ## Person 1 — Kernel service (Sathvik)
 
 **What you're building**: the piece that makes every discovered agent
-safe to run and able to scale under load. One kernel instance per
-site, managing a pool of that site's demo agent containers rather
-than a single fixed instance.
+safe to run, able to scale under load, and observable end to end. One
+kernel instance per site, managing a pool of that site's demo agent
+containers, owner of the OTel collector setup and tracing conventions
+since most traces originate here.
 
-**Design — constraint evaluation**: rules are generic (`field`, `op`,
-`value`, plus `source`/`confidence` for display), not hardcoded per
-agent. The kernel runs one generic `evaluate_rule(rule, response) ->
-Violation | None` against whatever the agent's response contains.
+**Design — constraint evaluation**: generic `field`/`op`/`value`
+rules, each carrying `source`/`confidence` for display. One function,
+`evaluate_rule(rule, response) -> Violation | None`.
 
-**Design — kill switch**: a real kill is a container-level kill
-(Docker SDK), not a cooperative timeout an agent could ignore. On
-violation or timeout, kill the container, then start a fresh one for
-the next dispatch.
+**Design — kill switch**: container-level kill (Docker SDK), not a
+cooperative timeout. Reused by the scaler for idle scale-down.
 
-**Design — autoscaling**: the kernel manages a pool per `agent_id`. A
-scaling policy per agent (`min_replicas`, `max_replicas`,
-`target_concurrency`, `scale_down_after_idle_seconds`) drives a loop
-that spins up a new instance when concurrency exceeds target and
-kills idle instances after the cooldown. Every pool change (spin-up,
-kill) is written as an `AgentRow` update in SpacetimeDB so the
-Fulfillment pod count is live everywhere, this is the actual "watch
-Kubernetes-style scaling happen" demo moment.
+**Design — autoscaling**: a pool per `agent_id`, driven by a scaling
+policy (`min_replicas`, `max_replicas`, `target_concurrency`,
+`scale_down_after_idle_seconds`). Every scaler tick writes both a
+pool-change row to SpacetimeDB's `agents` table (on change) and a
+full `agent_metrics` row (every tick, whether or not it changed
+anything): load, target, current replicas, **desired replicas**
+(`ceil(load / target_concurrency)`, clamped to
+`[min_replicas, max_replicas]`), so the Monitor screen can show the
+actual formula with live numbers, not just the outcome.
+
+**Design — demo-friendly scaling**: `scale_down_after_idle_seconds`
+should be overridable per-run (env var or request param) so the
+hackathon demo uses a short cooldown (15-30s) instead of a realistic
+production value, scale-down needs to be watchable, not dead air.
+
+**Design — observability**: FastAPI auto-instrumentation covers HTTP
+spans, add custom spans for `dispatch` (root span), `constraint_check`,
+`scale_decision`, propagate `traceparent` on every outbound call
+(to the demo agent, to the coordinator). A killed run's span carries
+`violation.rule`, `violation.expected`, `violation.actual` as
+attributes, this is what lets the demo pull up the exact trace for
+the misdirection scenario in Jaeger.
 
 **Tasks**
-- Subscribe to this site's **confirmed** manifest in SpacetimeDB's
-  `manifests` table (draft manifests are invisible to you), update
-  live if it's re-confirmed
-- `POST /dispatch` — validate `direct_assignable` / `entry_only_via`,
-  pick or spin up an instance from the pool, call `POST /invoke`
-- Constraint evaluator — generic rule evaluation per the design above
-- Kill switch — container-level kill on violation, timeout, or budget
-  breach, plus restart-for-next-dispatch logic
-- Budget enforcer — track tool-call count and elapsed time per
-  `run_id` in memory
-- Scaler loop — scale a pool up/down per agent's scaling policy,
-  write pool state to SpacetimeDB on every change
-- `POST /policy` — accept a policy update pushed from the coordinator
-- Post an `EventRequest` to the coordinator's `POST /events` after
-  every run (done or killed) and after every scale event
-- `GET /health` — status and remaining budget
-- `GET /agents/{agent_id}/instances` — current pool size and status
-- `POST /agents/{agent_id}/scale` — manual scale-up, for triggering
-  the flash-sale demo moment live
+- Subscribe to this site's **confirmed** manifest in SpacetimeDB
+- `POST /dispatch` — validate, pick or spin up an instance, call
+  `POST /invoke` with a hard timeout, propagate trace context
+- Constraint evaluator — generic rule evaluation
+- Kill switch — container-level kill, plus restart-for-next-dispatch
+- Budget enforcer — tool-call count and elapsed time per `run_id`
+- Scaler loop — grow/shrink pools, write `agents` and `agent_metrics`
+  rows to SpacetimeDB every tick
+- `POST /agents/{agent_id}/simulate-load` — fire N synthetic
+  dispatches at a configurable rate, letting the scaler loop react on
+  its own; this is what the Federation dashboard's "Simulate flash
+  sale" button actually calls
+- `POST /agents/{agent_id}/scale` — manual override, kept as an
+  emergency/debug path, not the primary demo mechanism
+- `POST /policy` — accept a policy update from the coordinator
+- Post an `EventRequest` after every run and scale event
+- `GET /health`, `GET /agents/{agent_id}/instances`
+- Stand up the `otel-collector` + Jaeger containers in compose,
+  define span/attribute naming conventions the whole team follows
+- Export scaling metrics (`rosterd.agent.replicas`,
+  `rosterd.agent.load`, `rosterd.agent.desired_replicas`,
+  `rosterd.budget.remaining`) via the OTel SDK
 
 **Contract**: `kernel.py` + `shared.py`. Calls out to `demo_agent.py`'s
-`InvokeRequest`/`InvokeResponse`, and to `coordinator.py`'s
-`EventRequest`.
+request/response shapes, and to `coordinator.py`'s `EventRequest`.
 
-**Depends on**: Person 2's manifest shape being stable and confirmed
-manifests appearing in SpacetimeDB, Person 4's `/invoke` endpoint
-running in its own container per instance.
+**Depends on**: Param's manifest reaching `confirmed` status, Shruti's
+`/invoke` running with real tool schemas, Joy's `agents`/`agent_metrics`
+table schemas being agreed before the scaler writes to them.
 
 ---
 
-## Person 2 — Ingestion service
+## Person 2 — Ingestion service (Param)
 
 **What you're building**: the service that reads code and turns it
-into structured, contract-bound understanding, twice over: once for
-a repo at setup (ingestion), once for a plain-language request at
-runtime (`/ask/parse`). Both are the same underlying idea, unstructured
-input in, a confirmed structured action out, which is also your
-strongest tie to the Auctor track.
+into structured, contract-bound understanding, twice over: a repo at
+setup (ingestion), and a plain-language request at runtime
+(`/ask/parse`).
 
-**Design — inference instead of a config file**: for each discovered
-node, pull constraints from three sources, in order of confidence:
+**Design — inference instead of a config file**: three sources, in
+order of confidence, tool schema (`Field(le=100)` style constraints,
+high), code guard (AST-scanned threshold comparisons, medium),
+`interrupt()` call (marks an agent as not directly assignable, high).
+Anything else gets `source: default`, `confidence: low`.
 
-1. **Tool schema** (high confidence): a LangChain tool's Pydantic
-   `args_schema` field with `Field(le=100)` or similar becomes a
-   `ConstraintRule` directly, this is a typed guarantee, not a guess
-2. **Code guard** (medium confidence): AST-scan the node function body
-   for comparisons against a threshold followed by a raise or an
-   escalate-style return (`if amount > X: ...`), best-effort
-3. **`interrupt()` call** (high confidence, different kind of rule):
-   presence of LangGraph's `interrupt()` in a node marks it
-   `direct_assignable: false` and infers `entry_only_via` from that
-   node's predecessors in the graph
-
-Anything not covered by one of these gets a `default` source and a
-`low` confidence flag, so the Review screen can point it out plainly.
+**Design — confirm gate**: every manifest writes as `status: draft`.
+`POST /manifest/{id}/confirm` takes the (possibly edited) agent list
+from the Review screen and flips it to `confirmed`, the only status a
+kernel will subscribe to.
 
 **Tasks**
-- `POST /ingest` — clone the repo, load the compiled LangGraph graph
-  via `get_graph()`, run the three-source inference above per node
-- Assemble one `AgentManifestEntry` per agent (id, node, purpose from
-  docstring, tools, `direct_assignable`, `entry_only_via`, constraint
-  rules with source/confidence, scaling policy)
-- Write the manifest to SpacetimeDB's `manifests` table with
-  `status: draft`
-- `POST /manifest/{manifest_id}/confirm` — accept the (possibly
-  edited) agent list from the Review screen, write `status: confirmed`.
-  This is the only way a manifest becomes visible to kernels
-- `POST /ask/parse` — accept `{manifest_id, text}`, use the confirmed
-  manifest's agent list to parse plain language into a proposed
-  `{agent_id, task, criteria}`, returned for the frontend's Ask screen
-  to show as a confirmable card before dispatch
-- Decide manifest versioning: does a re-ingest or re-confirm create a
-  new `manifest_id`, or overwrite in place
+- `POST /ingest` — clone the repo, extract graph + run inference
+- Assemble `AgentManifestEntry` per agent, write to SpacetimeDB as
+  `draft`
+- `POST /manifest/{manifest_id}/confirm`
+- `POST /ask/parse` — plain text in, `{agent_id, task, criteria,
+  confidence}` out
+- Decide manifest versioning
+- Add OTel spans for `ingest`, `infer_constraints`, `parse_ask`,
+  propagate trace context if `/ask/parse` leads to a dispatch
 
-**Contract**: `ingestion.py`, built on `shared.GraphSpec`/`GraphEdge`.
-This is the manifest format every other service consumes, flag
-changes to the whole team before merging.
+**Contract**: `ingestion.py`.
 
-**Depends on**: Person 4's repo having real, typed tool schemas (this
-is what makes inference demoable instead of hand-waved) and at least
-one `interrupt()` call, early enough to test introspection against.
+**Depends on**: Shruti's repo having real, typed tool schemas and an
+`interrupt()` call early. Joy's `manifests` table schema, agreed
+together since Joy owns the SpacetimeDB module.
 
 ---
 
-## Person 3 — Coordinator, SpacetimeDB, and frontend
+## Person 3 — Coordinator, SpacetimeDB, and frontend (Joy)
 
 **What you're building**: the federation layer, the live state
-everyone watches, and every screen in the product.
+everyone watches, every screen in the product (now 8 with Monitor),
+and the SpacetimeDB module other services write to.
 
 **Tasks — coordinator**
-- `POST /events` — receive a run or scale event from any kernel,
-  return a `policy_update` if it matches a known failure pattern
-- `GET /sites` — current status, score, and pool sizes per site
-- `POST /policy/push` — call each kernel's `POST /policy` when a
-  shared failure pattern is detected across 2+ sites
+- `POST /events` — receive a run/scale event, write to `events`,
+  return a `policy_update` if matched
+- `GET /sites`, `POST /policy/push`
+- OTel spans around event handling and policy-match logic
 
-**Tasks — SpacetimeDB (dashboard + pool tables)**
-- Define `agents` (one row per running instance, not per agent type,
-  this is what makes the pool count live), `tasks`, `sites`, `events`
-- Reducers: `update_agent_status`, `record_task`, `record_event`,
-  `update_site_score`, called by the kernel and coordinator, never
-  written to directly by the frontend
-- `manifests` is Person 2's table, you only subscribe to it
+**Tasks — SpacetimeDB**
+- `agents` (one row per running instance), `tasks`, `sites`, `events`
+- `agent_metrics` (`site_id, agent_id, timestamp, in_flight_count,
+  queued_count, target_concurrency, current_replicas,
+  desired_replicas, min_replicas, max_replicas`), written by Sathvik's
+  kernel every scaler tick, read by the Monitor screen for its
+  sparkline
+- Reducers for all of the above, `manifests` stays Param's table, you
+  only subscribe
 
 **Tasks — frontend**
-- **Ingest**: repo URL only, no file upload, "Analyzing repository"
-  state, discovery preview
-- **Review** (new): inferred rules in a table with source badges
-  (schema / code guard / interrupt detected) and confidence, edit
-  affordance per row, "Confirm and go live" calls Person 2's confirm
-  endpoint
-- **Ask** (new): single input, "what do you need done," calls
-  `/ask/parse`, shows the proposed agent + extracted criteria as a
-  card, "Do it" dispatches
-- **Roster**: circular status bubbles per agent, stacked pod count
-  when a pool has scaled past one instance (e.g. "Fulfillment ×3"),
-  calendar-style scheduling with assignees and expectation criteria
-- **Contracts**: tools, spend limit, source, direct-assignable,
-  scaling range, subscribed to `manifests`
-- **Federation**: per-site status, per-agent pod counts, a "Simulate
-  flash sale" button that fires a burst of tasks to demo autoscaling
-  live, violation and policy-update badges, coordinator activity feed
+- **Ingest**: repo URL only
+- **Review**: inferred rules with source/confidence badges, confirm
+- **Ask**: plain text in, proposed action card, dispatch
+- **Roster**: bubbles with a stacked, **animated** pod-count badge
+  (the transition itself should be visible, not just the end value),
+  calendar scheduling
+- **Contracts**: tools, spend limit, source, scaling range
+- **Federation**: per-site status, live pod counts, per-instance
+  concurrency dots (solid = working, hollow = idle), **Simulate
+  flash sale** button (calls `/simulate-load`, not `/scale`),
+  violation/policy-update badges
+- **Monitor** (new): per-agent card with a live sparkline of load vs
+  replicas, and the scaling formula spelled out with current numbers
+  ("load: 8, target: 2, desired: ceil(8/2) = 4, clamped to max 4"),
+  subscribed to `agent_metrics`
 - Subscribe directly to SpacetimeDB tables everywhere, no polling
 
-**Contract**: `coordinator.py`. Frontend reads are SpacetimeDB
-subscriptions; writes go through kernel/coordinator/ingestion REST
-endpoints, never direct table writes from the frontend.
+**Contract**: `coordinator.py`.
 
-**Depends on**: event and pool-row shape from Person 1, manifest and
-`/ask/parse` shape from Person 2.
+**Depends on**: event, `AgentRow`, and `agent_metrics` shape from
+Sathvik; manifest and `/ask/parse` shape from Param.
 
 ---
 
-## Person 4 — Demo agentic system (e-commerce)
+## Person 4 — Demo agentic system (Shruti)
 
-**What you're building**: an order-fulfillment LangGraph system,
-written so ingestion's automatic inference has real signal to pull
-from. This is a deliverable in its own right, the tool schemas you
-write ARE the contract, there's no separate file to keep in sync.
+**What you're building**: the order-fulfillment LangGraph system.
+Tool schemas and the one `interrupt()` call ARE the contract now.
 
 **Tasks**
-- Build the 3-agent LangGraph system:
-  - **Order Intake** — classifies an incoming order (standard,
-    high-value, fraud-flagged)
-  - **Fulfillment** — reserves inventory, tool `reserve_inventory(sku,
-    qty: int)` with a real schema constraint (`qty <= stock_on_hand`,
-    or a fixed cap if stock isn't modeled), this is the agent that
-    autoscales under a flash sale burst
-  - **Refund/Exception** — issues refunds, tool `issue_refund(order_id,
-    amount: float = Field(le=100))`, and calls `interrupt()` before
-    approving anything outside that range, this is what makes it
-    correctly infer as not-directly-assignable
-- `POST /invoke` — accept `{entry_node, input}`, run that node (and
-  downstream routing), return output plus tool calls made
-- `GET /graph` — expose the same graph structure ingestion extracts
-  statically, to confirm the two never drift apart
-- Seed the misdirection scenario: a conversation where a fake
-  "manager override" message tries to get Refund/Exception to approve
-  an out-of-policy amount, this is the demo's core failure-caught
-  moment, and it should trip the schema-inferred limit specifically,
-  not a hardcoded check
-- Dockerfile for this service, isolated on its own site network
+- Order Intake, Fulfillment (`reserve_inventory`, real qty
+  constraint), Refund/Exception (`issue_refund`, `amount: float =
+  Field(le=100)`, `interrupt()` before anything outside that range)
+- `POST /invoke`, `GET /graph`
+- Seed the misdirection scenario, tripping the schema-inferred limit
+  specifically
+- Dockerfile, isolated on its own site network
+- Add OTel auto-instrumentation to `/invoke` so its span nests under
+  the kernel's dispatch trace (propagate the incoming `traceparent`)
 
-**Contract**: `demo_agent.py`. This is the only service that doesn't
-call anyone else, it just answers `/invoke` and `/graph`.
+**Contract**: `demo_agent.py`.
 
-**Depends on**: nothing else technically, start immediately. The
-quality of your tool schemas and your one `interrupt()` call are what
-make Person 2's whole pitch ("no manual config") actually true, treat
-them as the real deliverable, not incidental code.
+**Depends on**: nothing to start, get tool schemas and `interrupt()`
+in early, Param's inference needs something real to test against.
 
 ---
 
 ## Demo flow
 
-1. Paste only a repo URL → ingestion infers 3 agents, their tools,
-   and their rules with source tags → **Review screen** shows them,
-   confirm → manifest goes live, kernels subscribe, roster populates
-2. **Ask screen**: type "refund order #4482, duplicate charge" →
-   proposed action card shows Refund/Exception assigned with the
-   inferred $100 criteria → confirm → dispatches
-3. Run the seeded misdirection scenario → the agent attempts an
-   out-of-policy refund → kernel's constraint check (against the
-   schema-inferred rule, not a hardcoded one) catches it → kill
+1. Paste a repo URL → ingestion infers 3 agents → **Review** →
+   confirm → manifest live, roster populates
+2. **Ask**: "refund order #4482, duplicate charge" → proposed action
+   card → confirm → dispatches
+3. Seeded misdirection scenario → out-of-policy refund attempted →
+   kernel kills it against the schema-inferred rule → click **"View
+   trace"** directly on the violation card and land on the exact
+   Jaeger span, not a manual search by timestamp
 4. Event reaches the coordinator → 2+ sites show a policy update
-   pushed, zero order data having crossed between sites
-5. **Flash sale**: hit "Simulate flash sale" on the Federation
-   dashboard → Fulfillment's pool grows live in SpacetimeDB, visible
-   as pod count on every screen at once → after the burst, it scales
-   back down, both directions shown, not just scale-up
+   pushed, zero order data crossed
+5. **Flash sale**: hit "Simulate flash sale" → `/simulate-load` fires
+   a burst at Site A → **Monitor screen** shows load spike, the
+   desired-replica line jump ahead of current, then the kernel catch
+   up → Roster and Federation show the animated pod-count badge climb
+   ×1 → ×4 live, same SpacetimeDB subscription updating every screen
+   at once → after the burst, scale back down within the shortened
+   demo cooldown, both directions shown
+
+## Rehearsal checklist
+
+- Confirm the demo-mode scale-down cooldown is set (short, not
+  production) before walking through
+- Do one full timed dry run of the flash-sale sequence, note how long
+  scale-up and scale-down actually take live
+- Record a clean backup clip of the full sequence as a fallback
+- Decide ahead of time who clicks "Simulate flash sale" live vs who
+  narrates, so it isn't fumbled mid-sentence
+- Confirm the Jaeger UI is reachable and the misdirection trace is
+  easy to find before relying on it live (bookmark the trace ID or
+  filter by service name in advance)

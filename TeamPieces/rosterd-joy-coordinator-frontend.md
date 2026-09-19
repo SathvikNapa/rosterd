@@ -10,18 +10,23 @@ was inferred, the kernel enforces the confirmed contract at runtime.
 ## Your role
 
 You own the federation layer, the live state everyone watches, and
-every screen in the product, now seven screens instead of five: two
-are new (Review, Ask), directly answering the two tracks. Review is
-where a human turns inferred code into a confirmed, enforceable
-contract. Ask is the literal conversation-to-action flow, plain text
-in, a bounded task out.
+every screen in the product, eight screens now: Review and Ask
+(answering the two tracks directly), plus Monitor (the autoscaling
+decision made visible). Review is where a human turns inferred code
+into a confirmed, enforceable contract. Ask is the literal
+conversation-to-action flow, plain text in, a bounded task out.
 
-SpacetimeDB is scoped to three things: your dashboard tables
-(agents, tasks, sites, events), the `manifests` table (Person 2's,
-you only subscribe), and specifically, `agents` is now one row per
-running instance, not per agent type, this is what makes the
-autoscaling pod count a live subscription instead of a periodic poll,
-the actual best-use case for the SpacetimeDB track.
+SpacetimeDB is scoped to four things: your dashboard tables (agents,
+tasks, sites, events), `agent_metrics` (feeding Monitor's sparkline),
+and the `manifests` table (Person 2's, you only subscribe).
+`agents` is one row per running instance, not per agent type, this is
+what makes the autoscaling pod count a live subscription instead of a
+periodic poll, the actual best-use case for the SpacetimeDB track.
+
+You're also the reason a violation is debuggable in one click, not a
+manual Jaeger search: every event you receive carries a `trace_id`
+from the kernel, store it, and render a "View trace" link wherever
+that event shows up in the UI.
 
 ```
 kernel-site-A ──┐
@@ -44,18 +49,25 @@ ingestion-service ──> SpacetimeDB `manifests` (draft → confirmed) ──> 
   subscribes directly
 - `POST /policy/push` — call each kernel's `POST /policy` when a
   shared failure pattern is detected across 2+ sites
+- Add OTel spans around event handling and policy-match logic, and
+  propagate incoming trace context from the kernel's `/events` call
+  so the coordinator's handling shows up as a child span of the same
+  dispatch trace
 
 ### SpacetimeDB (dashboard + pool tables)
 
 - Define `agents` (**one row per running instance**, `site_id,
   agent_id, instance_id, name, status, updated_at`), `tasks`, `sites`,
   `events`
+- Define `agent_metrics` (`site_id, agent_id, timestamp,
+  in_flight_count, queued_count, target_concurrency,
+  current_replicas, desired_replicas, min_replicas, max_replicas`),
+  written by Sathvik's kernel every scaler tick, this is what the
+  Monitor screen's sparkline and live formula readout subscribe to
 - Reducers: `update_agent_status`, `record_task`, `record_event`,
-  `update_site_score`, called by the kernel and coordinator, never
-  written to directly by the frontend
-- `manifests` is Person 2's table, you subscribe for the Review,
-  Contracts, and Roster screens, agree on its shape with them early
-  since you likely own the SpacetimeDB module setup
+  `update_site_score`, `record_agent_metrics`, called by the kernel
+  and coordinator, never written to directly by the frontend
+- `manifests` is Person 2's table, you only subscribe to it
 
 ### Frontend
 
@@ -69,13 +81,29 @@ ingestion-service ──> SpacetimeDB `manifests` (draft → confirmed) ──> 
   criteria as a card, "Do it" dispatches via Person 1's kernel
 - **Roster**: circular status bubbles per agent, stacked pod-count
   badge when a pool has scaled past one instance ("Fulfillment ×3"),
-  calendar-style scheduling with assignees and expectation criteria
+  **animate the count changing** (don't just swap the number, this is
+  a live demo moment), calendar-style scheduling with assignees and
+  expectation criteria
 - **Contracts**: tools, spend limit, source, direct-assignable
   status, scaling range, subscribed to `manifests` (confirmed only)
-- **Federation**: per-site status, live pod counts per agent, a
-  **Simulate flash sale** button (fires a burst of dispatches at one
-  site to trigger autoscaling live), violation and policy-update
-  badges, coordinator activity feed
+- **Federation**: per-site status, live pod counts per agent,
+  **per-instance concurrency dots** (solid = working, hollow = idle)
+  so parallel draining reads as visible, not inferred, a **Simulate
+  flash sale** button calling Person 1's
+  `POST /agents/{agent_id}/simulate-load` (not the manual `/scale`
+  endpoint, this should look like real load triggering the scaler),
+  violation and policy-update badges, coordinator activity feed
+- **Monitor** (new): per-agent card with a live sparkline of load vs
+  replica count, and the scaling formula spelled out with current
+  numbers ("load: 8, target: 2, desired: ceil(8/2) = 4, clamped to
+  max 4"), subscribed to `agent_metrics`
+- **Debug mode / trace linking**: everywhere an event with a
+  `trace_id` is shown (Federation's activity feed, the Task Run &
+  Violation screen), render a small "View trace" link that opens
+  `{JAEGER_BASE_URL}/trace/{trace_id}` in a new tab, so a violation
+  in the UI is one click from its exact span in Jaeger. `JAEGER_BASE_URL`
+  is a small frontend env config, confirm the value with Sathvik once
+  his collector/Jaeger container is up
 - Subscribe directly to SpacetimeDB tables everywhere, no polling
 
 ## Dependencies
@@ -164,6 +192,7 @@ class EventRequest(BaseModel):
     status: RunStatus | Literal["scaled_up", "scaled_down"]
     violation: Violation | None = None
     pool_size: int | None = None
+    trace_id: str | None = None  # links this event to its Jaeger trace
     timestamp: datetime
 
 
@@ -189,6 +218,7 @@ class EventLogEntry(BaseModel):
     run_id: str | None = None
     status: RunStatus | Literal["scaled_up", "scaled_down"]
     violation: Violation | None = None
+    trace_id: str | None = None
     timestamp: datetime
 
 
@@ -218,6 +248,22 @@ class AgentRow(BaseModel):
     updated_at: datetime
 
 
+class AgentMetricsRow(BaseModel):
+    """Written by the kernel every scaler tick, not just on change.
+    Powers the Monitor screen's sparkline and live formula readout."""
+
+    site_id: str
+    agent_id: str
+    timestamp: datetime
+    in_flight_count: int
+    queued_count: int
+    target_concurrency: int
+    current_replicas: int
+    desired_replicas: int
+    min_replicas: int
+    max_replicas: int
+
+
 class TaskRow(BaseModel):
     task_id: str
     site_id: str
@@ -237,7 +283,7 @@ class TaskRow(BaseModel):
 ### Who sends you data
 
 - Person 1's kernel posts `EventRequest` to `POST /events` and writes
-  `AgentRow` updates directly to SpacetimeDB as instance status and
-  pool size change
+  `AgentRow` and `AgentMetricsRow` updates directly to SpacetimeDB as
+  instance status, pool size, and scaling decisions change
 - Person 2's ingestion writes `manifests` (draft, then confirmed),
   and answers `/ask/parse` for the Ask screen

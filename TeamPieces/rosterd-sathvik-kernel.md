@@ -3,111 +3,146 @@
 ## High-level idea (context)
 
 rosterd takes an existing LangGraph agent system and makes it safe to
-run, schedulable in plain language, and federatable, without a manual
-config file. Discovery reads the repo directly, a human confirms what
-was inferred, the kernel enforces the confirmed contract at runtime.
+run, schedulable in plain language, auto-scalable under load, and
+federatable, with a real observability story. Discovery reads the
+repo directly, a human confirms what was inferred, the kernel
+enforces the confirmed contract at runtime.
 
 ## Your role
 
 You own the kernel: the piece that makes every discovered agent safe
-to run, and able to scale under load. One kernel instance runs per
-site, managing a pool of that site's demo agent containers rather
-than a single fixed instance. It is the only thing that can reach
-those containers, and the only thing allowed to leave the site's
-network, toward the coordinator.
+to run, able to scale, and traceable end to end. One kernel instance
+per site, managing a pool of that site's demo agent containers. You
+also own the OTel collector setup and the tracing conventions the
+whole team follows, since most traces originate at dispatch, here.
 
-One change from before: you subscribe only to **confirmed**
-manifests. A `draft` manifest (fresh out of ingestion, not yet
-reviewed by a human) is invisible to you, it governs nothing until
-someone confirms it.
-
-State for this service is in-memory (dicts keyed by `run_id` and
-`agent_id`) except for pool state, which you write to SpacetimeDB on
-every change so the pod count is live everywhere, not just something
-you know internally.
+State is in-memory except pool state and scaling metrics, which you
+write to SpacetimeDB on every scaler tick so both are live everywhere,
+not just known internally.
 
 ```
 frontend ──> kernel-service ──> demo-agent-service × pool (same site only)
                   │
                   ├──> coordinator-service (posts events, receives policy updates)
-                  └──> SpacetimeDB (writes agent pool rows on every scale event)
+                  ├──> SpacetimeDB (writes agents + agent_metrics every tick)
+                  └──> otel-collector ──> Jaeger + metrics backend
 ```
 
 ## Design: constraint evaluation
 
-Rules are generic (`field`, `op`, `value`), each carrying a `source`
-(`schema` / `code` / `interrupt` / `default`) and `confidence` for
-display purposes, the kernel's enforcement logic doesn't care which
-source a rule came from, it evaluates all of them the same way. One
-function, `evaluate_rule(rule, response) -> Violation | None`, pure
-and unit-testable against fixture responses.
-
-E-commerce example: `issue_refund`'s schema-inferred rule is
-`tool_calls[0].args.amount <= 100`, same mechanism as any other rule,
-the domain changed, nothing about the evaluator did.
+Generic `field`/`op`/`value` rules, each carrying `source`
+(`schema`/`code`/`interrupt`/`default`) and `confidence` for display.
+One function, `evaluate_rule(rule, response) -> Violation | None`,
+pure and unit-testable.
 
 ## Design: kill switch
 
-A real kill is container-level (Docker SDK,
-`client.containers.get(name).kill()`), not a cooperative timeout. On
-violation or timeout, kill the container, then start a fresh one for
-the next dispatch. Reused by the scaler below for idle scale-down,
-different trigger, same mechanism.
+Container-level kill (Docker SDK), not a cooperative timeout. Reused
+by the scaler for idle scale-down.
 
 ## Design: autoscaling
 
-The kernel manages a **pool per `agent_id`**. A scaling policy per
-agent (`min_replicas`, `max_replicas`, `target_concurrency`,
-`scale_down_after_idle_seconds`) drives a loop:
+A pool per `agent_id`, driven by a scaling policy
+(`min_replicas`, `max_replicas`, `target_concurrency`,
+`scale_down_after_idle_seconds`):
 
-- **Instance registry**: `instances: dict[str, list[AgentInstance]]`,
-  keyed by `agent_id`, tracking `instance_id`, `container_name`,
-  `status`, `started_at`
-- **Dispatch picks or creates**: look for an idle instance first; if
-  none and pool < `max_replicas`, spin up a new container; if pool is
-  at `max_replicas`, queue
-- **Scaler loop** (every few seconds): scale up when queued/in-flight
-  tasks per instance exceeds `target_concurrency`; scale down (kill)
-  an instance idle past `scale_down_after_idle_seconds` when pool >
-  `min_replicas`
-- **Every pool change writes an `AgentRow` to SpacetimeDB**: this is
-  what makes "watch Fulfillment scale from 1 to 4 pods" a live
-  subscription on the dashboard, not something you'd have to poll for
+- **Instance registry**: `instances: dict[str, list[AgentInstance]]`
+- **Dispatch picks or creates** an idle instance, or spins up a new
+  one if pool < `max_replicas`, or queues if at cap
+- **Scaler loop** (every few seconds): compute
+  `desired_replicas = clamp(ceil(load / target_concurrency),
+  min_replicas, max_replicas)`, spin up or kill instances to close
+  the gap with current
+- **Every tick, not just on change**, write an `agent_metrics` row to
+  SpacetimeDB: `load`, `target_concurrency`, `current_replicas`,
+  `desired_replicas`, `min_replicas`, `max_replicas`. This is what
+  Joy's Monitor screen sparkline and formula readout are built on,
+  the kernel already computes this every tick, this task is just
+  making it visible instead of internal
+- **On any actual pool change**, also write/update the relevant
+  `AgentRow` in SpacetimeDB's `agents` table
+
+## Design: demo-friendly scaling
+
+`scale_down_after_idle_seconds` needs to be short enough to actually
+watch happen live (15-30s), not a realistic production value.
+Support overriding it per-run (env var, or a param on the
+`simulate-load` call below), so the hackathon demo isn't waiting
+through a multi-minute cooldown on stage.
+
+## Design: observability
+
+FastAPI auto-instrumentation covers HTTP spans for free. Add custom
+spans for `dispatch` (root span for the whole call chain),
+`constraint_check`, and `scale_decision`. Propagate `traceparent` on
+every outbound call, to the demo agent's `/invoke` and to the
+coordinator's `/events`, so one dispatch is one traceable path across
+services. On a kill, set the span status to error and attach
+`violation.rule`, `violation.expected`, `violation.actual` as span
+attributes, this is what lets the demo pull up the exact trace in
+Jaeger for the misdirection scenario instead of only showing a UI
+card. Export the same scaling numbers as OTel metrics
+(`rosterd.agent.replicas`, `rosterd.agent.load`,
+`rosterd.agent.desired_replicas`, `rosterd.budget.remaining`), so an
+external Grafana dashboard could plot the identical curve the
+in-app Monitor screen shows, two export paths, same underlying data.
+
+## Design: debug mode / trace linking
+
+Nothing currently connects a run in the UI to its trace in Jaeger, a
+person would have to manually search Jaeger by timestamp. Fix: grab
+the `dispatch` root span's `trace_id` (from the current OTel context)
+the moment a dispatch starts, and thread it through everything that
+run produces:
+
+- Include `trace_id` in the `RunResponse` returned from
+  `GET /runs/{run_id}`
+- Include `trace_id` in the `EventRequest` posted to the coordinator
+  after every run
+
+This is what lets the frontend render a one-click "View trace" link
+straight from a run or a violation to its exact span in Jaeger,
+rather than a separate tool a person has to know to go check.
 
 ## Tasks
 
-- Subscribe to this site's **confirmed** manifest in SpacetimeDB's
-  `manifests` table (filter `status: confirmed`), update live on
-  re-confirm
+- Subscribe to this site's **confirmed** manifest in SpacetimeDB
 - `POST /dispatch` — validate `direct_assignable`/`entry_only_via`,
-  pick or spin up an instance from the pool, call `POST /invoke` with
-  a hard timeout
-- Constraint evaluator — generic `evaluate_rule` per the design above
+  pick or spin up an instance, call `POST /invoke` with a hard
+  timeout, propagate trace context
+- Constraint evaluator — generic rule evaluation per the design above
 - Kill switch — container-level kill on violation, timeout, or budget
   breach, plus restart-for-next-dispatch logic
 - Budget enforcer — track tool-call count and elapsed time per
-  `run_id` in memory
-- Scaler loop — grow/shrink each agent's pool per its scaling policy,
-  write every change to SpacetimeDB's `agents` table
-- `POST /policy` — accept a policy update pushed from the coordinator
+  `run_id`
+- Scaler loop — grow/shrink pools, write `agents` and `agent_metrics`
+  every tick, respect the demo-mode cooldown override
+- `POST /agents/{agent_id}/simulate-load` — fire N synthetic
+  dispatches at a configurable rate, letting the scaler loop react on
+  its own; this is what the Federation dashboard's "Simulate flash
+  sale" button calls, not `/scale`
+- `POST /agents/{agent_id}/scale` — manual override, kept as an
+  emergency/debug path
+- `POST /policy` — accept a policy update from the coordinator
 - Post an event to the coordinator's `POST /events` after every run
-  and every scale event
-- `GET /health` — status and remaining budget
-- `GET /agents/{agent_id}/instances` — current pool: instance count
-  and status per instance
-- `POST /agents/{agent_id}/scale` — manual override, this is what the
-  Federation dashboard's "Simulate flash sale" button calls
+  and every scale event, including the run's `trace_id`
+- `GET /health`, `GET /agents/{agent_id}/instances`
+- Stand up `otel-collector` + Jaeger in the compose file, define the
+  span/attribute naming conventions (e.g. `rosterd.*` namespace) the
+  rest of the team follows for their own spans
+- Export scaling metrics via the OTel SDK
 
 ## Dependencies
 
-- Person 2's manifest format must be stable, and a manifest must
-  reach `status: confirmed` in SpacetimeDB before you have anything
-  to subscribe to
-- Person 4's `/invoke` endpoint must be callable, running in its own
-  container per instance, with real tool schemas so the constraint
-  rules you enforce are meaningful, not placeholders
-- Person 3 owns the `agents` table schema in SpacetimeDB, agree on
-  the `AgentRow` shape together, you're its primary writer
+- Param's manifest must reach `status: confirmed` in SpacetimeDB
+  before you have anything to subscribe to
+- Shruti's `/invoke` must be callable with real tool schemas, so the
+  constraints you enforce are meaningful, and must propagate incoming
+  trace context so her spans nest correctly
+- Joy owns the `agents` and `agent_metrics` table schemas, agree on
+  both together before your scaler writes to them; she also owns the
+  otel-collector's downstream wiring into the frontend if any is
+  needed, confirm the collector endpoint address early
 
 ## API contract
 
@@ -121,7 +156,8 @@ agent (`min_replicas`, `max_replicas`, `target_concurrency`,
 | POST | `/policy` | Apply a policy update from the coordinator |
 | GET | `/health` | Status and remaining budget |
 | GET | `/agents/{agent_id}/instances` | Current pool size and per-instance status |
-| POST | `/agents/{agent_id}/scale` | Manual scale-up, used by the flash-sale demo trigger |
+| POST | `/agents/{agent_id}/scale` | Manual scale override (debug/emergency) |
+| POST | `/agents/{agent_id}/simulate-load` | Fire synthetic load, primary demo trigger for autoscaling |
 
 ### Shared types (`shared.py`, import this, don't redefine it)
 
@@ -173,8 +209,8 @@ class GraphSpec(BaseModel):
 
 ```python
 """Kernel service — one instance per site. Dispatches tasks, enforces
-constraints from the confirmed manifest, scales agent pools, and can
-kill a run or an idle instance."""
+constraints from the confirmed manifest, scales agent pools, exports
+scaling metrics and traces, and can kill a run or an idle instance."""
 
 from datetime import datetime
 from enum import Enum
@@ -219,6 +255,7 @@ class RunResponse(BaseModel):
     ended_at: datetime | None = None
     violation: Violation | None = None
     output: str | None = None
+    trace_id: str | None = None  # links this run to its Jaeger trace
 
 
 class KillResponse(BaseModel):
@@ -267,13 +304,97 @@ class ScaleRequest(BaseModel):
 class ScaleResponse(BaseModel):
     agent_id: str
     replicas: int
+
+
+class SimulateLoadRequest(BaseModel):
+    count: int = 10
+    rate_per_second: float = 3.0
+    scale_down_after_idle_seconds_override: int | None = None
+
+
+class SimulateLoadResponse(BaseModel):
+    agent_id: str
+    dispatched: int
+```
+
+### Constraint rule and scaling policy shape (matches Param's `AgentManifestEntry.constraints` / `.scaling`)
+
+```python
+from enum import Enum
+from typing import Literal
+
+from pydantic import BaseModel
+
+
+class ConstraintSource(str, Enum):
+    schema = "schema"
+    code = "code"
+    interrupt = "interrupt"
+    default = "default"
+
+
+class Confidence(str, Enum):
+    high = "high"
+    medium = "medium"
+    low = "low"
+
+
+class ConstraintRule(BaseModel):
+    field: str
+    op: Literal["lte", "gte", "eq", "in", "not_in"]
+    value: float | str | list
+    source: ConstraintSource
+    confidence: Confidence
+
+
+class ScalingPolicy(BaseModel):
+    min_replicas: int = 1
+    max_replicas: int = 1
+    target_concurrency: int = 1
+    scale_down_after_idle_seconds: int = 30
+```
+
+### SpacetimeDB rows you write (schemas owned by Joy, agree on shape together)
+
+```python
+from datetime import datetime
+
+from pydantic import BaseModel
+
+
+class AgentRow(BaseModel):
+    """One row per running instance."""
+
+    site_id: str
+    agent_id: str
+    instance_id: str
+    name: str
+    status: str  # "idle" | "working" | "killed"
+    updated_at: datetime
+
+
+class AgentMetricsRow(BaseModel):
+    """Written every scaler tick, not just on change."""
+
+    site_id: str
+    agent_id: str
+    timestamp: datetime
+    in_flight_count: int
+    queued_count: int
+    target_concurrency: int
+    current_replicas: int
+    desired_replicas: int
+    min_replicas: int
+    max_replicas: int
 ```
 
 ### What you call out to
 
-- Demo agent's `InvokeRequest`/`InvokeResponse` (see Person 4's doc)
-- Coordinator's `EventRequest` shape (see Person 3's doc)
-- SpacetimeDB's `agents` table (see Person 3's doc), you're the
-  primary writer as pool size changes
+- Demo agent's `InvokeRequest`/`InvokeResponse` (see Shruti's doc)
+- Coordinator's `EventRequest` shape (see Joy's doc)
+- SpacetimeDB's `agents` and `agent_metrics` tables, you're the
+  primary writer for both
 - Docker SDK for Python, to create, kill, and restart demo agent
   containers on this site
+- OTel SDK, for spans and metric export; the `otel-collector`
+  endpoint address, which you own in compose
