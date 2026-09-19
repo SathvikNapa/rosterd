@@ -136,3 +136,116 @@ def test_a_file_that_does_not_parse_is_recorded_not_fatal(tmp_path):
 
 def test_tools_for_source_handles_unparseable_input():
     assert tools_for_source("def broken(:", {"x"}) == []
+
+
+class TestRealWorldPatterns:
+    """Patterns found in LangChain's own public templates.
+
+    Each of these was discovered by probing a real repo (scripts/probe.py) and
+    finding the wiring came back incomplete.
+    """
+
+    def test_toolnode_resolves_a_tool_list_held_in_a_variable(self, tmp_path):
+        """`ToolNode(TOOLS)` — how langchain-ai/react-agent does it."""
+        root = write(
+            tmp_path,
+            **{"agent.py": (
+                "TOOLS = [search, scrape_website]\n"
+                "b.add_node('tools', ToolNode(TOOLS))\n"
+            )},
+        )
+        scan = scan_repo(root)
+        assert scan.list_vars["TOOLS"] == ["search", "scrape_website"]
+        assert scan.node_inline_tools["tools"] == ["search", "scrape_website"]
+
+    def test_annotated_tool_list_is_resolved(self, tmp_path):
+        """`TOOLS: List[Callable[..., Any]] = [search]` is an AnnAssign."""
+        root = write(
+            tmp_path,
+            **{"agent.py": (
+                "from typing import Any, Callable, List\n"
+                "TOOLS: List[Callable[..., Any]] = [search]\n"
+                "b.add_node('tools', ToolNode(TOOLS))\n"
+            )},
+        )
+        assert scan_repo(root).node_inline_tools["tools"] == ["search"]
+
+    def test_a_plain_callable_in_a_tool_list_counts_as_a_tool(self, tmp_path):
+        """react-agent's `search` is a bare async def, not @tool-decorated."""
+        root = write(
+            tmp_path,
+            **{"agent.py": (
+                "async def search(q): ...\n"
+                "TOOLS = [search]\n"
+                "b.add_node('tools', ToolNode(TOOLS))\n"
+            )},
+        )
+        assert "search" in scan_repo(root).tool_names
+
+    def test_conditional_edges_recovered_from_a_literal_return_type(self, tmp_path):
+        """add_conditional_edges may omit the path map entirely."""
+        root = write(
+            tmp_path,
+            **{"agent.py": (
+                "from typing import Literal\n"
+                "def route_model_output(state) -> Literal['__end__', 'tools']:\n    ...\n"
+                "b.add_conditional_edges('call_model', route_model_output)\n"
+            )},
+        )
+        edges = scan_repo(root).edges
+        assert ("call_model", "__end__", "route_model_output") in edges
+        assert ("call_model", "tools", "route_model_output") in edges
+
+    def test_single_target_literal_return_type(self, tmp_path):
+        root = write(
+            tmp_path,
+            **{"agent.py": (
+                "from typing import Literal\n"
+                "def route(state) -> Literal['tools']:\n    ...\n"
+                "b.add_conditional_edges('a', route)\n"
+            )},
+        )
+        assert ("a", "tools", "route") in scan_repo(root).edges
+
+    def test_path_map_list_mixing_strings_and_sentinels(self, tmp_path):
+        """`add_conditional_edges(src, router, ["store_memory", END])`."""
+        root = write(
+            tmp_path,
+            **{"agent.py": "b.add_conditional_edges('call_model', route, ['store_memory', END])\n"},
+        )
+        edges = scan_repo(root).edges
+        assert ("call_model", "store_memory", "route") in edges
+        assert ("call_model", "END", "route") in edges
+
+    def test_an_explicit_path_map_still_wins_over_the_return_type(self, tmp_path):
+        """The literal fallback must not override what the author wrote."""
+        root = write(
+            tmp_path,
+            **{"agent.py": (
+                "from typing import Literal\n"
+                "def route(state) -> Literal['ignored']:\n    ...\n"
+                "b.add_conditional_edges('a', route, {'x': 'real_target'})\n"
+            )},
+        )
+        edges = scan_repo(root).edges
+        assert ("a", "real_target", "route") in edges
+        assert ("a", "ignored", "route") not in edges
+
+    def test_a_string_in_a_tool_list_is_not_treated_as_a_tool(self, tmp_path):
+        root = write(
+            tmp_path,
+            **{"agent.py": "b.add_node('tools', ToolNode(['not_a_tool_name']))\n"},
+        )
+        assert scan_repo(root).node_inline_tools["tools"] == []
+
+    def test_bind_tools_resolves_a_variable(self, tmp_path):
+        root = write(
+            tmp_path,
+            **{"agent.py": (
+                "TOOLS = [search]\n"
+                "def call_model(state):\n"
+                "    return llm.bind_tools(TOOLS).invoke(state)\n"
+            )},
+        )
+        scan = scan_repo(root)
+        assert tools_used_by_function(scan.functions["call_model"], scan.tool_names, scan) == ["search"]

@@ -219,7 +219,7 @@ def _static_tools(scan: astscan.RepoScan, node_name: str) -> list[str]:
     func = scan.functions.get(func_name)
     if func is None:
         return []
-    return astscan.tools_used_by_function(func, scan.tool_names)
+    return astscan.tools_used_by_function(func, scan.tool_names, scan)
 
 
 def discover(repo: Path, settings: Settings) -> DiscoveryResult:
