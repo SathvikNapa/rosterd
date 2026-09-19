@@ -216,3 +216,54 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# ---------------------------------------------------------------------------
+# rosterd — team additions
+#
+# Everything above is GitHub's stock Python template. Below is what this repo
+# specifically needs. Keep new rules down here so the template stays diffable
+# against upstream.
+# ---------------------------------------------------------------------------
+
+# Throwaway git checkout staged by rosterd-ingestion/scripts/run.sh.
+#
+# The ingestion service ingests demo-agent by CLONING it, so it needs a git repo
+# to point at. But demo-agent/ itself must stay a PLAIN DIRECTORY in this tree:
+# a .git inside the working tree makes this outer repo record demo-agent as a
+# bare gitlink and never commit its source files, so teammates would clone and
+# find the directory empty and every ingestion test would fail.
+#
+# run.sh therefore copies demo-agent into .demo-repo/, git-inits the copy, and
+# points the service there. Nothing in .demo-repo/ is worth committing.
+.demo-repo/
+
+# Ingested manifests. Regenerate with POST /ingest; never meant to be shared,
+# and they embed absolute local paths.
+data/
+*/data/
+
+# Local service overrides
+.env.local
+.env.*.local
+
+# Editors. The stock template leaves these commented out; a team on mixed
+# editors wants them on.
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Frontend (Person 3). The stock template is Python-only.
+node_modules/
+.next/
+.nuxt/
+.svelte-kit/
+.turbo/
+.parcel-cache/
+coverage/
+*.tsbuildinfo
+.eslintcache
+
+# macOS
+.DS_Store
+.AppleDouble

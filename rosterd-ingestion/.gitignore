@@ -1,0 +1,17 @@
+# Service-local ignores. The repo root .gitignore already covers all of this for
+# the team repo; these are kept so rosterd-ingestion stays correct on its own if
+# it is ever extracted into a standalone repo.
+
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Ingested manifests — regenerate with POST /ingest.
+data/
+
+# Throwaway git copy of demo-agent that scripts/run.sh stages so the service has
+# something clonable. demo-agent/ itself stays a plain directory on purpose: a
+# .git inside the working tree would make the outer repo store it as a bare
+# gitlink and never commit its source files.
+.demo-repo/

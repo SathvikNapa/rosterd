@@ -1,0 +1,8 @@
+fastapi==0.141.1
+httpx==0.28.1
+langchain-core==1.6.3
+langgraph==1.2.11
+pydantic==2.13.5
+pytest==9.1.1
+PyYAML==6.0.3
+uvicorn==0.53.0
