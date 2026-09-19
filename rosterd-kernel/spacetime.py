@@ -1,20 +1,29 @@
 """SpacetimeDB row shapes the kernel writes, and the writer that gets them
 there.
 
-`AgentRow` / `AgentMetricsRow` are verbatim from the brief (Joy owns the
-table schemas; the kernel is the primary writer for both). The writer
-itself is a small abstraction over how the row actually gets to
-SpacetimeDB, because no generated SpacetimeDB client exists in this repo:
+`AgentRow` / `AgentMetricsRow` are verbatim from the brief. The real module
+now exists at rosterd-spacetimedb/ (database name `rosterd`, tables
+`agents` + `agent_metrics` among others) and has been published and
+verified locally: both reducers this writer calls
+(`update_agent_status`, `record_agent_metrics`) accept exactly the shape
+`row.model_dump(mode="json")` produces. The writer itself is a small
+abstraction over how the row actually gets to SpacetimeDB, because no
+generated SpacetimeDB TypeScript-client bindings are vendored into this
+Python repo:
 
-* `LoggingSpacetimeWriter` (the default) just logs each row. This is what
-  runs until Joy's module and reducers (`update_agent_status`,
-  `record_agent_metrics`) exist, so the scaler and kill switch can be built
-  and tested today without blocking on that.
+* `LoggingSpacetimeWriter` (the default) just logs each row. This still
+  runs whenever `ROSTERD_KERNEL_SPACETIMEDB_URL` / `_MODULE` aren't set
+  (e.g. a bare `docker compose up` without the `spacetimedb` service), so
+  the scaler and kill switch keep working without a live SpacetimeDB.
 * `HttpReducerSpacetimeWriter` calls SpacetimeDB's HTTP reducer-call API
   directly (`POST /v1/database/{module}/call/{reducer}`), the stable REST
-  surface every generated client sits on top of. Swap in real generated
-  bindings later without touching scaler.py or killer.py -- both only ever
-  call `write_agent` / `write_agent_metrics`.
+  surface every generated client sits on top of. The call body is a JSON
+  *array* of positional arguments -- confirmed via a live round trip
+  against a real `spacetime start` server, since the naive `json=args`
+  (a bare object) is rejected by the real API. Both reducers here take one
+  structured `row` argument, so the array always has exactly one element.
+  Swap in real generated bindings later without touching scaler.py or
+  killer.py -- both only ever call `write_agent` / `write_agent_metrics`.
 
 Writes are best-effort: a SpacetimeDB outage must not stop the kernel from
 dispatching or scaling, only from being *visible* while it does.
@@ -76,12 +85,18 @@ class HttpReducerSpacetimeWriter:
         self._settings = settings
 
     def _call(self, reducer: str, args: dict) -> None:
+        # SpacetimeDB's HTTP reducer-call API takes a JSON *array* of
+        # positional arguments, not a bare object -- confirmed via a live
+        # round trip against a real `spacetime start` server. Every reducer
+        # in rosterd's module (see rosterd-spacetimedb/) takes exactly one
+        # structured `row` parameter, so the array always has one element:
+        # the row object itself.
         url = f"{self._settings.spacetimedb_url.rstrip('/')}/v1/database/{self._settings.spacetimedb_module}/call/{reducer}"
         headers = {"content-type": "application/json"}
         if self._settings.spacetimedb_auth_token:
             headers["authorization"] = f"Bearer {self._settings.spacetimedb_auth_token}"
         try:
-            response = httpx.post(url, json=args, headers=headers, timeout=5.0)
+            response = httpx.post(url, json=[args], headers=headers, timeout=5.0)
             response.raise_for_status()
         except Exception:  # noqa: BLE001 - best-effort, see module docstring
             logger.warning("SpacetimeDB reducer call %s failed (continuing)", reducer, exc_info=True)
