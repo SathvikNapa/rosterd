@@ -1,0 +1,8 @@
+# Service-local ignores. The repo root .gitignore already covers all of this
+# for the team repo; kept so rosterd-coordinator stays correct on its own if
+# it's ever extracted into a standalone repo.
+
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/

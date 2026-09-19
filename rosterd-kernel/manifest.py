@@ -73,9 +73,11 @@ class AgentManifestEntry(BaseModel):
 
 class ManifestDocument(BaseModel):
     """What a `manifests` row (or, today, ingestion's `GET /manifest/{id}`)
-    looks like once decoded. `status` defaults to confirmed because the
-    ingestion service currently committed to this repo does not emit the
-    field at all -- see the module docstring."""
+    looks like once decoded. `status` defaults to confirmed for a
+    hand-built document (e.g. StaticManifestSource in tests) that has no
+    reason to carry the field at all; ingestion's real responses always
+    set it explicitly, and manifest_source.ManifestSubscription refuses to
+    load anything that isn't `confirmed` -- see its module docstring."""
 
     manifest_id: str
     status: ManifestStatus = ManifestStatus.confirmed

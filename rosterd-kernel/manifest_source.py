@@ -2,14 +2,34 @@
 
 The brief's task is "subscribe to this site's confirmed manifest in
 SpacetimeDB". There is no generated SpacetimeDB subscription client in this
-repo, and (see manifest.py's docstring) the ingestion service committed
-today hasn't been updated to the finalized manifest shape or a
-draft/confirmed status either. `IngestionPollManifestSource` is the
-pragmatic stand-in: poll Param's `GET /manifest/{manifest_id}` on an
-interval and validate the body against manifest.ManifestDocument. Nothing
-downstream (dispatch, the scaler, the debug endpoint) talks to this module
-directly -- they all read manifest.ManifestIndex, so swapping this for a
-real subscription later is a one-file change.
+repo, so `IngestionPollManifestSource` is the pragmatic stand-in: poll
+Param's `GET /manifest/{manifest_id}` on an interval and validate the body
+against manifest.ManifestDocument. Nothing downstream (dispatch, the
+scaler, the debug endpoint) talks to this module directly -- they all read
+manifest.ManifestIndex, so swapping this for a real subscription later is a
+one-file change.
+
+Two things confirmed by actually running ingestion and pointing a kernel at
+it (not just reading the code):
+
+1. Ingestion *does* now emit `status: draft | confirmed` (as of its confirm
+   -gate commit) -- `ManifestSubscription.poll_once()` enforces the brief's
+   trust boundary ("a draft manifest governs nothing") by refusing to index
+   anything that isn't `confirmed`, the same way it already refuses `None`.
+   Confirmed via a repro: without this check, a schema-valid draft document
+   was accepted by `ManifestIndex.update()` and its agents became live.
+
+2. Ingestion's `AgentManifestEntry.constraints` is still a free-form
+   `{max_refund_usd, requires_prior_node, ...}` object, not the finalized
+   brief's `list[ConstraintRule]` (field/op/value/source/confidence) that
+   `manifest.py` implements. A real `/ingest` -> confirm -> poll round trip
+   against the bundled demo-agent fixture fails Pydantic validation on
+   `constraints` for every agent. This is a cross-team contract gap, not
+   something to silently paper over with a guessed field-path mapping here
+   (see the kernel README's "Notes for the team") -- it surfaces as a
+   logged warning and `manifest_not_ready`, not a crash, but it does mean
+   today's real ingestion output can't be consumed until the shapes
+   converge.
 """
 from __future__ import annotations
 
@@ -19,7 +39,7 @@ from typing import Protocol
 
 import httpx
 
-from manifest import ManifestDocument, ManifestIndex
+from manifest import ManifestDocument, ManifestIndex, ManifestStatus
 
 logger = logging.getLogger("rosterd.kernel.manifest_source")
 
@@ -78,6 +98,15 @@ class ManifestSubscription:
             logger.warning("manifest poll failed", exc_info=True)
             return False
         if document is None:
+            return False
+        if document.status != ManifestStatus.confirmed:
+            # The brief's trust boundary: "a draft manifest governs
+            # nothing." Treated the same as no document at all -- the
+            # index just keeps serving whatever it last had confirmed.
+            logger.info(
+                "manifest %s is %s, not confirmed -- not loading it",
+                document.manifest_id, document.status.value,
+            )
             return False
         try:
             self._index.update(document)
