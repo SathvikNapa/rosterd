@@ -1,0 +1,61 @@
+/* Design tokens, lifted verbatim from TeamPieces/Design.html.
+   Every value here appears literally in one of the seven exported frames —
+   nothing is invented, so a screen built from these reads as the same
+   system the Figma render does. */
+
+:root {
+  /* surfaces */
+  --bg: #faf9f6;
+  --surface: #ffffff;
+  --surface-muted: #f2f0ea;
+
+  /* lines */
+  --border: #e7e4dc;
+  --border-soft: #f0eee7;
+  --border-neutral: #d8d4ca;
+
+  /* text */
+  --text: #26251f;
+  --text-strong: #1e1d19;
+  --text-body: #57544d;
+  --text-muted: #8c887f;
+  --text-faint: #b7b3a9;
+
+  /* accent (rosterd green) */
+  --accent: #5e7e71;
+  --accent-dark: #4b6459;
+  --accent-mid: #8fa99c;
+  --accent-soft: #e5ede9;
+
+  /* status: ok / working */
+  --ok: #5b8a63;
+  --ok-dark: #4f7857;
+  --ok-soft: #e6f0e8;
+
+  /* status: warn / scaled up */
+  --warn: #b98a3e;
+  --warn-soft: #f5eedf;
+
+  /* status: danger / killed / violation */
+  --danger: #b25a4e;
+  --danger-soft: #f7e9e7;
+  --danger-border: #e9cfc9;
+  --danger-bg: #fbf2f1;
+
+  /* type */
+  --font-sans: 'Space Grotesk', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, monospace;
+
+  /* radii used by the frames */
+  --r-sm: 8px;
+  --r-md: 10px;
+  --r-lg: 14px;
+  --r-xl: 16px;
+  --r-pill: 999px;
+
+  /* the frames are 1440×900 with a 64px bar; content padding is 48px
+     (40/48 on Roster, 64 on Ingest) */
+  --nav-h: 64px;
+  --page-pad: 48px;
+  --page-max: 1440px;
+}

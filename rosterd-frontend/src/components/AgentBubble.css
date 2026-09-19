@@ -1,0 +1,48 @@
+.bubble {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.bubble__disc {
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  background: var(--surface);
+}
+
+.bubble__count {
+  position: absolute;
+  bottom: -4px;
+  right: -6px;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: var(--r-pill);
+  border: 2px solid var(--surface);
+  line-height: 1.2;
+}
+
+/* The pod count changing is a demo beat — animate it, don't swap it. */
+.bubble__count--bump {
+  animation: bubble-bump 600ms cubic-bezier(0.22, 1.2, 0.36, 1);
+}
+
+@keyframes bubble-bump {
+  0% {
+    transform: scale(1);
+  }
+  35% {
+    transform: scale(1.5);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bubble__count--bump {
+    animation: none;
+  }
+}

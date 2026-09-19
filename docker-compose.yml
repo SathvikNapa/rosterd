@@ -175,7 +175,25 @@ services:
   #   build: ./rosterd-demo-agent
   #   networks: [rosterd-site-a]     # only reachable by kernel-site-a
 
-  # frontend:
-  #   build: ./rosterd-frontend
-  #   ports: ["3000:3000"]
-  #   networks: [rosterd-backend]
+  # The UI. Served as static files by nginx; the browser talks to the
+  # services over the HOST's published ports (that's why the VITE_* build
+  # args below are localhost URLs, not compose service names -- see
+  # rosterd-frontend/Dockerfile). Host 3000 belongs to spacetimedb, so this
+  # takes 5173.
+  #
+  # ingestion is still not in this file, so the Ingest/Review/Ask screens
+  # need `cd rosterd-ingestion && ./scripts/run.sh` alongside this stack.
+  frontend:
+    build:
+      context: ./rosterd-frontend
+      args:
+        VITE_INGESTION_URL: http://localhost:8000
+        VITE_KERNEL_URL: http://localhost:8100
+        VITE_COORDINATOR_URL: http://localhost:8300
+        VITE_SPACETIMEDB_URL: http://localhost:3000
+        VITE_JAEGER_BASE_URL: http://localhost:16686
+        VITE_SITE_ID: site-a
+    ports:
+      - "5173:5173"
+    networks: [rosterd-backend]
+    depends_on: [kernel-site-a, coordinator]

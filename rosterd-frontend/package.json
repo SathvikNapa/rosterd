@@ -1,0 +1,26 @@
+{
+  "name": "rosterd-frontend",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "rosterd control plane UI — ingest, review, ask, roster, contracts, federation, monitor.",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc -b --noEmit",
+    "gen:bindings": "./scripts/generate-bindings.sh"
+  },
+  "dependencies": {
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1",
+    "react-router-dom": "^7.8.2"
+  },
+  "devDependencies": {
+    "@types/react": "^19.1.12",
+    "@types/react-dom": "^19.1.9",
+    "@vitejs/plugin-react": "^5.0.2",
+    "typescript": "~5.9.2",
+    "vite": "^7.1.5"
+  }
+}
