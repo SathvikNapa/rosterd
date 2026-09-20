@@ -74,19 +74,64 @@ class GraphLocation:
     module_file: Path
     attr: str
     how: str
+    #: What the worker subprocess chdir's into and puts on sys.path[0] --
+    #: the repo root by default, but the directory containing langgraph.json
+    #: when found there (see _find_langgraph_json): a real monorepo's
+    #: package-relative imports (`from app.foo import bar`) resolve against
+    #: THAT directory, not the outer clone root one or more levels above it.
+    project_root: Path = field(default=None)  # type: ignore[assignment]
+
+    def __post_init__(self) -> None:
+        if self.project_root is None:
+            object.__setattr__(self, "project_root", self.module_file.parent)
 
 
-def _parse_spec(spec: str, repo: Path) -> GraphLocation | None:
-    """Turn a 'path/to/mod.py:attr' or 'pkg.mod:attr' spec into a location."""
+def _parse_spec(spec: str, project_root: Path, *, how: str | None = None) -> GraphLocation | None:
+    """Turn a 'path/to/mod.py:attr' or 'pkg.mod:attr' spec into a location,
+    resolved relative to `project_root` -- the repo root for a top-level
+    spec, or a nested langgraph.json's own directory (see locate_graph)."""
     if ":" not in spec:
         return None
     raw_path, attr = spec.rsplit(":", 1)
     raw_path = raw_path.strip().lstrip("./")
-    candidate = repo / raw_path
+    candidate = project_root / raw_path
     if not candidate.suffix:
-        candidate = repo / (raw_path.replace(".", "/") + ".py")
+        candidate = project_root / (raw_path.replace(".", "/") + ".py")
     if candidate.is_file():
-        return GraphLocation(candidate, attr.strip(), spec)
+        return GraphLocation(candidate, attr.strip(), how or spec, project_root=project_root)
+    return None
+
+
+def _find_langgraph_json(repo: Path, *, max_depth: int = 3) -> Path | None:
+    """Search for langgraph.json up to `max_depth` below the repo root, not
+    just at the root itself.
+
+    Real monorepos commonly nest the actual deployable project under a
+    subdirectory (backend/, server/, apps/api/) alongside a frontend/ or
+    docs/ that share the outer repo -- confirmed against a real one
+    (bytedance/deer-flow): its langgraph.json lives at backend/langgraph.json,
+    never at the root, so a root-only check silently found nothing and fell
+    through to a much less reliable whole-repo compile()-assignment scan
+    instead, which is what actually produced "No module named 'app'" (it
+    matched an unrelated file with imports that only resolve from a
+    different directory than the one the worker put on sys.path).
+
+    Shallowest, first-found match wins -- lexicographic within a depth so
+    the result is deterministic, and vendored/build directories are
+    excluded the same way astscan already skips them.
+    """
+    root_candidate = repo / "langgraph.json"
+    if root_candidate.is_file():
+        return root_candidate
+    for depth in range(1, max_depth + 1):
+        pattern = "/".join(["*"] * depth) + "/langgraph.json"
+        found = sorted(
+            p
+            for p in repo.glob(pattern)
+            if not any(part in astscan._SKIP_DIRS for part in p.relative_to(repo).parts)
+        )
+        if found:
+            return found[0]
     return None
 
 
@@ -117,16 +162,19 @@ def locate_graph(repo: Path, settings: Settings) -> GraphLocation:
         )
 
     # 2. langgraph.json — the convention the LangGraph CLI itself uses.
-    manifest = repo / "langgraph.json"
-    if manifest.is_file():
+    # Searched below the root too, not just at it (see _find_langgraph_json).
+    manifest = _find_langgraph_json(repo)
+    if manifest is not None:
+        project_root = manifest.parent
+        rel = manifest.relative_to(repo)
         try:
             declared = json.loads(manifest.read_text(encoding="utf-8")).get("graphs", {})
         except json.JSONDecodeError as exc:
-            raise GraphNotFoundError(f"langgraph.json is not valid JSON: {exc}") from exc
+            raise GraphNotFoundError(f"{rel} is not valid JSON: {exc}") from exc
         for name, spec in declared.items():
-            found = _parse_spec(str(spec), repo)
+            found = _parse_spec(str(spec), project_root, how=f"{rel}:{name}")
             if found:
-                return GraphLocation(found.module_file, found.attr, f"langgraph.json:{name}")
+                return found
 
     # 3. A top-level `X = something.compile()` in a conventional module.
     searched = [repo / rel for rel in _CANDIDATE_FILES]
@@ -164,11 +212,16 @@ def locate_graph(repo: Path, settings: Settings) -> GraphLocation:
     )
 
 
-def _run_worker(repo: Path, location: GraphLocation, settings: Settings) -> dict:
-    """Import the graph in a child process and get its structure back."""
+def _run_worker(location: GraphLocation, settings: Settings) -> dict:
+    """Import the graph in a child process and get its structure back.
+
+    The worker chdir's into and sys.path-inserts `location.project_root`,
+    not necessarily the outer repo root -- a nested langgraph.json's
+    package-relative imports need to resolve against ITS directory (see
+    GraphLocation.project_root / _find_langgraph_json)."""
     try:
         completed = subprocess.run(
-            [sys.executable, str(_WORKER), str(repo), str(location.module_file), location.attr],
+            [sys.executable, str(_WORKER), str(location.project_root), str(location.module_file), location.attr],
             capture_output=True,
             text=True,
             timeout=settings.import_timeout_sec,
@@ -249,7 +302,7 @@ def discover(repo: Path, settings: Settings) -> DiscoveryResult:
         return _discover_static(repo, scan, warnings)
 
     location = locate_graph(repo, settings)
-    payload = _run_worker(repo, location, settings)
+    payload = _run_worker(location, settings)
     conditions = _condition_map(scan)
 
     nodes: dict[str, DiscoveredNode] = {}

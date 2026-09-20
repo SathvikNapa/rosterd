@@ -50,6 +50,53 @@ def test_langgraph_json_is_preferred_for_locating_the_graph(settings, make_repo)
     assert result.graph_attr == "langgraph.json:support"
 
 
+def test_langgraph_json_nested_in_a_subdirectory_is_found_and_its_imports_resolve(settings, make_repo):
+    """Found against a real repo (bytedance/deer-flow): langgraph.json lives
+    at backend/langgraph.json, never at the root -- a root-only check
+    silently found nothing and fell through to a much less reliable
+    whole-repo compile()-assignment scan, which is what actually produced
+    "No module named 'app'" for a file whose package-relative imports only
+    resolve from backend/, not the outer clone root. This monorepo-shaped
+    fixture mirrors that: a nested langgraph.json, a package-relative
+    import (`from agentapp.tools import issue_refund`) that only works if
+    backend/ -- not the repo root -- ends up on sys.path."""
+    _, path = make_repo(
+        "nested-monorepo",
+        {
+            "backend/langgraph.json": '{"graphs": {"main": "./agentapp/graph.py:graph"}}',
+            "backend/agentapp/__init__.py": "",
+            "backend/agentapp/tools.py": (
+                "from langchain_core.tools import tool\n"
+                "@tool\ndef issue_refund(order_id: str, amount: float) -> str:\n"
+                "    '''Issue a refund.'''\n"
+                "    return 'ok'\n"
+            ),
+            "backend/agentapp/graph.py": (
+                "from typing import TypedDict\n"
+                "from langgraph.graph import END, START, StateGraph\n"
+                "from agentapp.tools import issue_refund\n"
+                "\n"
+                "class S(TypedDict, total=False):\n"
+                "    text: str\n"
+                "\n"
+                "def refund_node(state: S) -> S:\n"
+                "    issue_refund.invoke({'order_id': 'x', 'amount': 1.0})\n"
+                "    return state\n"
+                "\n"
+                "builder = StateGraph(S)\n"
+                "builder.add_node('refund_node', refund_node)\n"
+                "builder.add_edge(START, 'refund_node')\n"
+                "builder.add_edge('refund_node', END)\n"
+                "graph = builder.compile()\n"
+            ),
+        },
+    )
+    result = discovery.discover(path, settings)
+    assert result.graph_attr == "backend/langgraph.json:main"
+    assert result.agent_nodes == ["refund_node"]
+    assert result.nodes["refund_node"].tools == ["issue_refund"]
+
+
 def test_falls_back_to_a_compile_assignment_without_langgraph_json(settings, make_repo):
     _, path = make_repo("undeclared", {"agent.py": SIMPLE_AGENT})
     result = discovery.discover(path, settings)
