@@ -25,7 +25,7 @@ value (`tool_calls[*].args.amount_usd`) matched
 `rosterd-ingestion/demo-agent/tools.py`'s bundled discovery fixture, which
 is exercised by ingestion's own probe/discovery tests but is not the
 service any real kernel is ever configured against
-(`ROSTERD_KERNEL_FAKE_AGENT_URL` / the real Docker network point at
+(`ROSTERD_KERNEL_SIMULATED_AGENT_URL` / the real Docker network point at
 `rosterd-demo-agent`, never at ingestion's fixture) -- see the README's
 "Verified against the real ingestion service" section for the run that
 used the old value, and the note just below it for this change.

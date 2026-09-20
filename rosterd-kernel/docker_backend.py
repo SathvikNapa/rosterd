@@ -1,14 +1,23 @@
 """Container-level control of demo-agent instances.
 
-`FakeDockerBackend` is the default (`ROSTERD_KERNEL_DOCKER_MODE=fake`):
+Both backends below dispatch to a genuinely real, running demo-agent --
+real HTTP calls, real graph execution, real LLM calls when a provider key
+is configured. Neither backend is a mock of *the agent*. What differs
+between them is only the layer underneath the agent: whether an "instance"
+in the pool corresponds to an actual Docker container or to an in-memory
+bookkeeping record pointed at one already-running process.
+
+`SimulatedDockerBackend` is the default (`ROSTERD_KERNEL_DOCKER_MODE=simulated`):
 every "instance" is an in-memory record, and every instance's /invoke
-target is the same configured URL (`ROSTERD_KERNEL_FAKE_AGENT_URL`). That's
-enough to run the whole kernel -- dispatch, constraints, budget, the
+target is the same configured URL (`ROSTERD_KERNEL_SIMULATED_AGENT_URL`).
+That's enough to run the whole kernel -- dispatch, constraints, budget, the
 scaler, the demo endpoints -- against one locally-running demo-agent
 process (or a test double) with no Docker daemon and no image built yet,
-which matters this early in a hackathon build. `RealDockerBackend` is the
-real thing via the `docker` SDK, for when Shruti's image and the site
-network both exist.
+which matters this early in a hackathon build; it simulates *scaling*
+(replica count going up and down), not the agent doing the work.
+`RealDockerBackend` is the real thing via the `docker` SDK, for when
+Shruti's image and the site network both exist -- there, "instance" means
+an actual container.
 
 Kill is always `container.kill()` (SIGKILL), never a graceful stop -- the
 brief is explicit that this is container-level, not a cooperative timeout,
@@ -36,27 +45,32 @@ class DockerBackend(Protocol):
     def invoke_base_url(self, instance: AgentInstance) -> str: ...
 
 
-class FakeDockerBackend:
+class SimulatedDockerBackend:
+    """Simulates the instance *pool* -- no real container is ever started or
+    killed. Every simulated instance still forwards real invocations to a
+    real demo-agent process at `simulated_agent_url`; nothing about the
+    agent's own execution is simulated."""
+
     def __init__(self, settings) -> None:
         self._settings = settings
         self._seq = itertools.count(1)
 
     def start_instance(self, agent_id: str) -> AgentInstance:
         n = next(self._seq)
-        instance_id = f"fake-{agent_id}-{n}"
+        instance_id = f"sim-{agent_id}-{n}"
         return AgentInstance(
             instance_id=instance_id,
             agent_id=agent_id,
-            container_name=f"rosterd-fake-{self._settings.site_id}-{agent_id}-{n}",
+            container_name=f"rosterd-sim-{self._settings.site_id}-{agent_id}-{n}",
             status=InstanceStatus.idle,
             started_at=datetime.now(timezone.utc),
         )
 
     def kill_instance(self, instance: AgentInstance) -> None:
-        logger.info("fake-kill instance=%s", instance.instance_id)
+        logger.info("simulated-kill instance=%s (no real container to stop)", instance.instance_id)
 
     def invoke_base_url(self, instance: AgentInstance) -> str:
-        return self._settings.fake_agent_url
+        return self._settings.simulated_agent_url
 
 
 class RealDockerBackend:
@@ -107,4 +121,4 @@ class RealDockerBackend:
 def build_docker_backend(settings) -> DockerBackend:
     if settings.docker_mode == "real":
         return RealDockerBackend(settings)
-    return FakeDockerBackend(settings)
+    return SimulatedDockerBackend(settings)

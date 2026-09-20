@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Serves the kernel on :8100 (or $PORT), fake docker mode by default so it
-# runs with no Docker daemon and no manifest wired up yet.
+# Serves the kernel on :8100 (or $PORT), simulated docker mode by default
+# so it runs with no Docker daemon and no manifest wired up yet -- every
+# dispatched task still runs for real against a real demo-agent process.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 

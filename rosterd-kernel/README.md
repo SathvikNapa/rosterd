@@ -22,10 +22,12 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 ```
 
 Nothing above needs Docker, SpacetimeDB, Param's ingestion service, or an
-OTel collector running — `ROSTERD_KERNEL_DOCKER_MODE=fake` (the default)
-simulates the instance pool, SpacetimeDB writes fall back to logging, and
-OTel setup no-ops if the SDK can't reach a collector. Point `GET /health`,
-`/manifest`, and `/dispatch` at it immediately.
+OTel collector running — `ROSTERD_KERNEL_DOCKER_MODE=simulated` (the
+default) simulates the instance *pool* only (no real container is started
+or killed; every dispatch still runs for real against a real demo-agent
+process), SpacetimeDB writes fall back to logging, and OTel setup no-ops if
+the SDK can't reach a collector. Point `GET /health`, `/manifest`, and
+`/dispatch` at it immediately.
 
 Full compose (kernel + otel-collector + Jaeger, plus commented-out slots
 for everyone else's service once it has a Dockerfile) is at the repo root:
@@ -79,8 +81,8 @@ discipline as `rosterd-ingestion`'s own `/healthz` / `/manifests`.
 | `ROSTERD_KERNEL_INGESTION_URL` | `http://localhost:8000` | Polled for the confirmed manifest |
 | `ROSTERD_KERNEL_MANIFEST_ID` | — | Which manifest this site subscribes to. Unset = `manifest_not_ready` |
 | `ROSTERD_KERNEL_MANIFEST_POLL_SEC` | `5` | Poll interval |
-| `ROSTERD_KERNEL_DOCKER_MODE` | `fake` | `fake` simulates instances; `real` uses the Docker SDK |
-| `ROSTERD_KERNEL_FAKE_AGENT_URL` | `http://localhost:9000` | fake mode: every instance's `/invoke` target |
+| `ROSTERD_KERNEL_DOCKER_MODE` | `simulated` | `simulated` simulates the instance pool (real dispatch, real agent, no real container); `real` uses the Docker SDK |
+| `ROSTERD_KERNEL_SIMULATED_AGENT_URL` | `http://localhost:9000` | simulated mode: every instance's real `/invoke` target |
 | `ROSTERD_KERNEL_DOCKER_NETWORK` | `rosterd-{site_id}` | real mode: this site's isolated network |
 | `ROSTERD_KERNEL_AGENT_IMAGES` | `{}` | real mode: JSON `{agent_id: image}` map |
 | `ROSTERD_KERNEL_DEFAULT_AGENT_IMAGE` | `rosterd/demo-agent:latest` | real mode: fallback image |
@@ -113,7 +115,7 @@ discipline as `rosterd-ingestion`'s own `/healthz` / `/manifests`.
 | `constraints.py` | `evaluate_rule` / `evaluate_all` — the generic field/op/value engine |
 | `budget.py` | Tool-call-count / elapsed-time tracking per `run_id` |
 | `registry.py` | The instance pool (`instances: dict[str, list[AgentInstance]]`) + queue counters |
-| `docker_backend.py` | Fake (default) and real (Docker SDK) instance control |
+| `docker_backend.py` | Simulated (default) and real (Docker SDK) instance-pool control |
 | `killer.py` | The kill switch, shared by dispatch and the scaler |
 | `policy.py` | In-memory overrides from `POST /policy` |
 | `run_store.py` | In-memory run tracking; `killed` is sticky (see its docstring) |
@@ -381,7 +383,7 @@ tests (`tests/test_run_store.py`, `tests/test_app.py`'s
   language that unlocks an over-cap amount is also exactly what makes the
   reviewer suspicious). Proven directly instead:
   `test_resuming_approved_but_over_the_cap_still_gets_killed` drives the
-  exact scenario with a controlled fake response and asserts the kernel
+  exact scenario with a controlled scripted response and asserts the kernel
   kills it regardless of the approval.
 
 ## Known limitations
@@ -394,9 +396,9 @@ tests (`tests/test_run_store.py`, `tests/test_app.py`'s
   pool, a dispatch spin-waits up to `ROSTERD_KERNEL_QUEUE_WAIT_SEC` for an
   instance to free up, then rejects. No FIFO ordering guarantee across
   concurrent waiters beyond "whoever's poll happens to see it first."
-- **Fake Docker mode can't interrupt an in-flight `/invoke` call.** A
+- **Simulated Docker mode can't interrupt an in-flight `/invoke` call.** A
   manual kill still marks the run `killed` immediately (see "sticky kill"
-  above) and removes the instance from the pool, but in fake mode there's
-  no real container to sever, so a slow fake `/invoke` runs to completion
-  in the background regardless. Real Docker mode kills the actual
-  connection.
+  above) and removes the instance from the pool, but in simulated mode
+  there's no real container to sever, so a slow (real) `/invoke` call still
+  runs to completion in the background regardless. Real Docker mode kills
+  the actual connection.

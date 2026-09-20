@@ -86,15 +86,19 @@ class Settings:
     )
 
     # ---- docker / instance pool -------------------------------------------------
-    #: "fake" (default) simulates instances without a Docker daemon, so the
-    #: kernel runs and is testable before anyone's image is built. "real"
-    #: uses the Docker SDK. See docker_backend.py.
+    #: "simulated" (default) simulates the instance *pool* without a Docker
+    #: daemon, so the kernel runs and is testable before anyone's image is
+    #: built -- every simulated instance still forwards to a real,
+    #: genuinely running demo-agent, so dispatch, constraints, and budget
+    #: enforcement all happen for real; only replica count is simulated,
+    #: never the agent itself. "real" uses the Docker SDK. See
+    #: docker_backend.py.
     docker_mode: str = field(
-        default_factory=lambda: os.environ.get("ROSTERD_KERNEL_DOCKER_MODE", "fake").strip().lower()
+        default_factory=lambda: os.environ.get("ROSTERD_KERNEL_DOCKER_MODE", "simulated").strip().lower()
     )
-    #: fake mode only: every simulated instance's /invoke target.
-    fake_agent_url: str = field(
-        default_factory=lambda: os.environ.get("ROSTERD_KERNEL_FAKE_AGENT_URL", "http://localhost:9000")
+    #: simulated mode only: every simulated instance's real /invoke target.
+    simulated_agent_url: str = field(
+        default_factory=lambda: os.environ.get("ROSTERD_KERNEL_SIMULATED_AGENT_URL", "http://localhost:9000")
     )
     #: real mode only: this site's isolated Docker network (per the compose
     #: file, the kernel is the only thing on it that can also reach outside).

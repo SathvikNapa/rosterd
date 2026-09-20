@@ -1,9 +1,11 @@
 """Shared fixtures.
 
-Every test builds its own isolated Container (fake docker backend, a
-StaticManifestSource seeded in-process, no live ingestion/coordinator/
-SpacetimeDB needed) rather than sharing one module-level app, since the
-kernel is stateful across requests -- see app.py's module docstring.
+Every test builds its own isolated Container (simulated docker backend --
+no real container, but every dispatch still forwards to a real HTTP demo
+agent double via fake_demo_agent below -- plus a StaticManifestSource
+seeded in-process, no live ingestion/coordinator/SpacetimeDB needed) rather
+than sharing one module-level app, since the kernel is stateful across
+requests -- see app.py's module docstring.
 """
 from __future__ import annotations
 
@@ -27,7 +29,7 @@ from manifest_source import StaticManifestSource
 def make_settings(**overrides) -> Settings:
     base = dict(
         site_id="test-site",
-        docker_mode="fake",
+        docker_mode="simulated",
         otel_enabled=False,  # no collector in tests; also skips SDK setup entirely
         dispatch_timeout_sec=2.0,
         dispatch_queue_wait_sec=0.5,

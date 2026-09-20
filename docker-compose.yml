@@ -15,9 +15,11 @@
 #   curl  http://localhost:8300/healthz  # coordinator
 #   spacetime sql rosterd --server http://localhost:3000 "SELECT * FROM agents"
 #
-# The kernel defaults to ROSTERD_KERNEL_DOCKER_MODE=fake here, same as
+# The kernel defaults to ROSTERD_KERNEL_DOCKER_MODE=simulated here, same as
 # scripts/run.sh, so `docker compose up` works before Shruti's demo-agent
-# image exists and without mounting the host's Docker socket. Flip to
+# image exists and without mounting the host's Docker socket -- every
+# dispatched task still runs for real against a real demo-agent process,
+# only the container/instance-pool bookkeeping is simulated. Flip to
 # `real` (and uncomment the docker.sock mount + rosterd-site-a network)
 # once that image is built. See rosterd-kernel/README.md.
 #
@@ -94,8 +96,8 @@ services:
     environment:
       ROSTERD_SITE_ID: site-a
       ROSTERD_KERNEL_OTEL_ENDPOINT: http://otel-collector:4318
-      ROSTERD_KERNEL_DOCKER_MODE: fake
-      ROSTERD_KERNEL_FAKE_AGENT_URL: http://demo-agent-site-a:8000
+      ROSTERD_KERNEL_DOCKER_MODE: simulated
+      ROSTERD_KERNEL_SIMULATED_AGENT_URL: http://demo-agent-site-a:8000
       # ROSTERD_KERNEL_DOCKER_NETWORK: rosterd-site-a          # real mode only
       ROSTERD_KERNEL_INGESTION_URL: http://ingestion:8000
       ROSTERD_KERNEL_MANIFEST_ID: ${ROSTERD_MANIFEST_ID:-}     # set after POST /ingest
