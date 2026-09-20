@@ -319,6 +319,78 @@ class TestSandboxedInstallRetry:
         assert calls["ensure_installed"] == 0
 
 
+class TestPurposeDiscovery:
+    """_introspect_worker.py's _describe_node/_first_docline -- found live
+    against a real repo (rosterd-example) after a real bug report: /ask/parse
+    routed a fraud-review request to a read-only catalog agent instead of
+    order_intake, because catalog's discovered purpose had been truncated
+    mid-sentence at a line break, landing on a comma right after the word
+    "approval" -- which happened to match the user's text and outscored
+    order_intake, whose own purpose had independently leaked a LangGraph
+    internal wrapper's docstring instead of reporting empty. Both are real,
+    distinct bugs in the same function; both are covered here."""
+
+    def test_a_docstring_wrapped_across_lines_reports_the_full_sentence_not_the_first_line(
+        self, settings, make_repo
+    ):
+        _, path = make_repo(
+            "wrapped-docstring",
+            {
+                "agent.py": (
+                    "from typing import TypedDict\n"
+                    "from langgraph.graph import END, START, StateGraph\n"
+                    "class S(TypedDict, total=False):\n    text: str\n"
+                    "def catalog_node(state: S) -> S:\n"
+                    "    '''Read-only stock lookup -- no interrupt() gate, no approval needed,\n"
+                    "    same as fulfillment.'''\n"
+                    "    return state\n"
+                    "builder = StateGraph(S)\n"
+                    "builder.add_node('catalog_node', catalog_node)\n"
+                    "builder.add_edge(START, 'catalog_node')\n"
+                    "builder.add_edge('catalog_node', END)\n"
+                    "graph = builder.compile()\n"
+                ),
+                "langgraph.json": '{"graphs": {"g": "./agent.py:graph"}}',
+            },
+        )
+        result = discovery.discover(path, settings)
+        purpose = result.nodes["catalog_node"].purpose
+        assert purpose == "Read-only stock lookup -- no interrupt() gate, no approval needed, same as fulfillment."
+        # The specific old failure mode: truncated at the line break, landing
+        # mid-sentence on a word that could accidentally match unrelated text.
+        assert not purpose.endswith("needed,")
+
+    def test_a_node_with_no_docstring_of_its_own_reports_an_empty_purpose(self, settings, make_repo):
+        """Must NOT silently borrow LangGraph's own internal wrapper class
+        docstring -- confirmed live against a real undocumented node
+        (order_intake_node): the discovered purpose came back "A much
+        simpler version of RunnableLambda that requires sync and async
+        functions." before this fix, framework-internal text with nothing
+        to do with the node itself."""
+        _, path = make_repo(
+            "undocumented-node",
+            {
+                "agent.py": (
+                    "from typing import TypedDict\n"
+                    "from langgraph.graph import END, START, StateGraph\n"
+                    "class S(TypedDict, total=False):\n    text: str\n"
+                    "def order_intake_node(state: S) -> S:\n"
+                    "    return state\n"
+                    "builder = StateGraph(S)\n"
+                    "builder.add_node('order_intake_node', order_intake_node)\n"
+                    "builder.add_edge(START, 'order_intake_node')\n"
+                    "builder.add_edge('order_intake_node', END)\n"
+                    "graph = builder.compile()\n"
+                ),
+                "langgraph.json": '{"graphs": {"g": "./agent.py:graph"}}',
+            },
+        )
+        result = discovery.discover(path, settings)
+        purpose = result.nodes["order_intake_node"].purpose
+        assert purpose == ""
+        assert "RunnableLambda" not in purpose
+
+
 class TestStaticMode:
     """ROSTERD_DISCOVERY_MODE=static never imports the target repo."""
 

@@ -60,36 +60,82 @@ def score_agents(text: str, agents: list[AgentManifestEntry]) -> list[AgentScore
     """Rank agents by how well they match the request.
 
     This is the swap point for an LLM-backed parser.
+
+    Two real bugs, found live against a real report ("Act 4/5/6 doesn't
+    work from demo") that both come down to the same root cause -- generic
+    English words accidentally carrying more weight than they should:
+
+    1. `id`/`node` used to fire on ANY single keyword overlap (e.g. just
+       the word "order" matching one half of "order_intake"). "order" is
+       common enough in ordinary e-commerce text that it fired for nearly
+       any request, regardless of relevance -- confirmed live: "reserve
+       200 units of SKU-DEMO for a bulk order" scored order_intake
+       *higher* than fulfillment (whose own tool, reserve_inventory,
+       is the actually-correct signal), purely because the word "order"
+       incidentally appears in both the request and this agent's own id.
+       Fixed: id/node now require ALL of their keyword parts present, not
+       any one -- matching "order_intake" needs both "order" and "intake"
+       in the text, not just whichever one happens to be common. Tool
+       names are NOT changed the same way (see below) -- a real regression
+       check confirmed why: "reserve 3 units of SKU-EARBUDS-BLK" only
+       contains "reserve", not "inventory", so requiring the whole tool
+       name would have broken that legitimate match instead of fixing a
+       false one. Identifiers (id/node) and natural-language tool/purpose
+       matching behave differently on purpose.
+
+    2. A single matched word used to count separately in EVERY category it
+       happened to appear in (tool AND id AND node AND purpose), stacking
+       weights for what is really one piece of evidence, not four.
+       Confirmed live: "payment" alone (from "swapping payment cards")
+       scored the payment agent 9.0 -- tool:charge_payment (3) + id:payment
+       (3) + node:payment (2) + purpose:payment (1) -- for one overlapping
+       word, while order_intake, the agent the request actually needed,
+       scored 0. Fixed: each token is credited to the FIRST (strongest)
+       category it matches and never re-counted lower down the list.
     """
     tokens = set(tokenize(text))
     scored: list[AgentScore] = []
 
     for agent in agents:
         result = AgentScore(agent=agent)
+        claimed: set[str] = set()
 
         for tool in agent.tools:
-            hits = _keywords(tool) & tokens
+            hits = (_keywords(tool) & tokens) - claimed
             if hits:
                 result.score += _WEIGHT_TOOL * len(hits)
                 result.matched.append(f"tool:{tool}")
+                claimed |= hits
 
-        if _keywords(agent.id) & tokens:
+        id_kw = _keywords(agent.id)
+        if id_kw and id_kw <= tokens and not id_kw <= claimed:
             result.score += _WEIGHT_ID
             result.matched.append(f"id:{agent.id}")
+            claimed |= id_kw
 
-        node_words = _keywords(re.sub(r"_(node|agent)$", "", agent.node))
-        if node_words & tokens:
+        node_kw = _keywords(re.sub(r"_(node|agent)$", "", agent.node))
+        if node_kw and node_kw <= tokens and not node_kw <= claimed:
             result.score += _WEIGHT_NODE
             result.matched.append(f"node:{agent.node}")
+            claimed |= node_kw
 
-        purpose_hits = _keywords(agent.purpose) & tokens
+        purpose_hits = (_keywords(agent.purpose) & tokens) - claimed
         if purpose_hits:
             result.score += _WEIGHT_PURPOSE * len(purpose_hits)
             result.matched.append(f"purpose:{'/'.join(sorted(purpose_hits))}")
+            claimed |= purpose_hits
 
         scored.append(result)
 
-    return sorted(scored, key=lambda s: (-s.score, s.agent.id))
+    # A tie at zero is not a routing decision at all -- nothing about the
+    # request matched anything. Rather than an arbitrary alphabetical pick
+    # (confirmed live as a real failure mode: "catalog" only won a real
+    # fraud-review request because it sorts before "order_intake" and
+    # "payment"), prefer whichever tied agent has the FEWEST tools of its
+    # own: a node with no tools is structurally a router/classifier rather
+    # than an action-taking specialist, and is the more sensible default
+    # for a request with no clear signal for any specific action.
+    return sorted(scored, key=lambda s: (-s.score, len(s.agent.tools), s.agent.id))
 
 
 def _confidence(ranked: list[AgentScore]) -> Confidence:

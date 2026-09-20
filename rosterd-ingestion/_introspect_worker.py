@@ -15,17 +15,34 @@ import importlib.util
 import inspect
 import json
 import os
+import re
 import sys
 import traceback
 from typing import Any
 
 
 def _first_docline(obj: Any) -> str:
+    """The first SENTENCE of a docstring, not just its first physical line.
+
+    A docstring that wraps one sentence across multiple lines (the normal
+    PEP 257 hanging-indent style) used to get truncated mid-sentence at
+    the first line break -- confirmed against a real node's own docstring:
+    "Read-only stock lookup -- no interrupt() gate, no approval needed,\\n
+    same as fulfillment..." surfaced as a manifest purpose reading
+    "Read-only stock lookup -- no interrupt() gate, no approval needed,"
+    -- cut off at the line break, not the sentence, and (worse) landing on
+    a comma that happened to contain the word "approval", which fooled
+    ingestion's own /ask/parse keyword scorer into routing unrelated
+    fraud-review requests to this read-only node. Collapsing whitespace
+    first and splitting on sentence-ending punctuation avoids both: the
+    purpose reads as an actual sentence, whatever it wraps to in source.
+    """
     doc = inspect.getdoc(obj) or ""
-    for line in doc.strip().splitlines():
-        if line.strip():
-            return line.strip()
-    return ""
+    collapsed = " ".join(doc.split())
+    if not collapsed:
+        return ""
+    first = re.split(r"(?<=[.!?])\s+", collapsed, maxsplit=1)[0]
+    return first.strip()
 
 
 def _tool_names_from_binding(obj: Any) -> list[str]:
@@ -79,10 +96,27 @@ def _describe_node(node: Any) -> dict[str, Any]:
 
     info["tools"] = sorted(dict.fromkeys(tools))
 
-    # The original function, for its docstring and source location.
+    # The original function, for its docstring and source location. `target`
+    # is deliberately the ONLY thing `purpose` is ever read from -- it used
+    # to fall back to `_first_docline(data)` when the user's own function
+    # had no docstring, but `data` is the framework's own wrapping object
+    # (a LangGraph RunnableCallable/RunnableLambda-alike), never the user's
+    # code, and its class carries a real docstring of its own. Confirmed
+    # live against a real, undocumented node (order_intake_node, no
+    # docstring): the manifest's discovered purpose came back "A much
+    # simpler version of RunnableLambda that requires sync and async
+    # functions." -- LangGraph's own internal wrapper class docstring,
+    # nothing to do with the actual node, silently presented as if it
+    # were. Worse, discovery.py's in_repo gate (which is SUPPOSED to
+    # filter exactly this kind of framework-internal leak, see
+    # SENTINELS/test_sentinel_nodes_do_not_leak_langgraph_internal_docstrings)
+    # checks `target`'s source file, not `data`'s -- so it correctly saw
+    # an in-repo function and let the leaked text through anyway. A node
+    # with no docstring of its own now honestly reports an empty purpose
+    # instead of silently borrowing the framework's.
     func = getattr(data, "func", None) or getattr(data, "afunc", None)
     target = func if callable(func) else data
-    info["purpose"] = _first_docline(target) or _first_docline(data)
+    info["purpose"] = _first_docline(target)
     if isinstance(by_name := getattr(data, "tools_by_name", None), dict):
         info["kind"] = "ToolNode"
         info["purpose"] = info["purpose"] or "Executes bound tools"

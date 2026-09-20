@@ -51,6 +51,57 @@ class TestScoring:
         second = score_agents("something unrelated entirely", list(reversed(ROSTER)))
         assert [s.agent.id for s in first] == [s.agent.id for s in second]
 
+    def test_id_or_node_needs_every_keyword_part_not_just_one(self):
+        """Found live: "order_intake" used to fire on the word "order" ALONE
+        (one half of a two-word id), which is common enough in ordinary
+        e-commerce text to fire for nearly any request. Confirmed live:
+        "reserve 200 units of SKU-DEMO for a bulk order" scored
+        order_intake HIGHER than fulfillment, whose own tool
+        (reserve_inventory) is the actually-correct signal -- purely
+        because "order" incidentally appears in both the request and this
+        agent's own id."""
+        order_intake = agent("order_intake", "order_intake", "Classifies orders")
+        fulfillment = agent("fulfillment", "fulfillment", "Reserves inventory", ["reserve_inventory"])
+
+        ranked = score_agents("reserve 200 units of SKU-DEMO for a bulk order", [order_intake, fulfillment])
+        assert ranked[0].agent.id == "fulfillment"
+        assert not any(m.startswith("id:") for m in next(r for r in ranked if r.agent.id == "order_intake").matched)
+
+        # The full id -- both "order" AND "intake" present -- must still match.
+        ranked_full = score_agents("route this to the order intake agent", [order_intake, fulfillment])
+        assert any(m.startswith("id:") for m in ranked_full[0].matched)
+        assert ranked_full[0].agent.id == "order_intake"
+
+    def test_one_matched_word_is_not_double_counted_across_categories(self):
+        """Found live: a single overlapping word ("payment") used to score
+        separately in EVERY category it happened to appear in -- tool, id,
+        node, AND purpose -- stacking weights for one piece of evidence,
+        not four. Confirmed live: "payment" alone scored an agent named
+        (and tooled, and purposed) around "payment" a 9.0, drowning out
+        the agent the request actually needed. Each word should count
+        once, at its strongest category."""
+        payment = agent("payment", "payment", "Charges payment for an order", ["charge_payment"])
+        ranked = score_agents("a payment issue came up", [payment])
+        # tool:charge_payment claims "payment" first; id/node/purpose all
+        # also nominally contain "payment" but must not add on top of it.
+        assert ranked[0].score == pytest.approx(3.0)  # _WEIGHT_TOOL, once
+
+    def test_a_zero_score_tie_prefers_the_agent_with_fewer_tools(self):
+        """Found live: a genuine no-signal request (deliberately
+        keyword-sparse fraud/social-engineering language) used to break a
+        tie alphabetically by agent id, which is an arbitrary, meaningless
+        default. A node with NO tools of its own is structurally a
+        router/classifier rather than an action-taking specialist, and is
+        the more sensible default when nothing about the request matched
+        any agent at all."""
+        router = agent("order_intake", "order_intake", "Classifies incoming orders")
+        specialist_a = agent("catalog", "catalog", "Checks stock", ["check_stock"])
+        specialist_b = agent("payment", "payment", "Charges payment", ["charge_payment"])
+
+        ranked = score_agents("zzz completely unrelated nonsense qqq", [specialist_a, specialist_b, router])
+        assert ranked[0].score == 0.0
+        assert ranked[0].agent.id == "order_intake"
+
 
 class TestConfidence:
     def test_a_clear_tool_match_is_high(self):
