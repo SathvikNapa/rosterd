@@ -47,12 +47,32 @@ const ROSTERD_EXAMPLE_CONSTRAINTS_YAML = `# constraints.yaml — merged over wha
 # graph edges) when omitted -- only the business numbers below still need a
 # human. This is rosterd-example's real repo
 # (${ROSTERD_EXAMPLE_URL}).
+#
+# purpose: is here on every agent too, not just the two business numbers --
+# found live, this is not just cosmetic. Without it, ingestion falls back
+# to whatever docstring discovery can find, then to a title-cased node
+# name ("order_intake" -> "Order intake") as a last resort -- both can
+# accidentally carry (or lack) the keywords Ask's routing depends on. A
+# real bug this way: a node's own honest docstring ("no interrupt() gate,
+# no approval needed") legitimately contains the word "approval", which
+# was then enough to mis-route an unrelated fraud-review request to it.
+# The purposes below are deliberately short and on-topic for exactly that
+# reason.
 version: 1
 constraints:
+  order_intake:
+    purpose: Classifies an incoming order as standard, high-value, or fraud-flagged
   fulfillment:
+    purpose: Reserves inventory for a standard/high-value order
     max_qty: 50
   refund_exception:
+    purpose: Issues refunds; calls interrupt() for fraud-flagged/high-value orders
     max_refund_usd: 100
+  catalog:
+    purpose: Read-only stock lookup for a SKU
+  payment:
+    purpose: Charges payment for an order
+    max_charge_usd: 2000
 `;
 
 // Any OTHER repo — the node names above are rosterd-example's own, and a
