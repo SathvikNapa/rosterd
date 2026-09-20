@@ -1,6 +1,8 @@
 """Task 1: cloning, locating the graph, and extracting nodes/edges/tools."""
 from __future__ import annotations
 
+import sys
+
 import pytest
 from conftest import DEMO_AGENT, SIMPLE_AGENT, TOOLNODE_AGENT
 
@@ -153,6 +155,168 @@ def test_import_timeout_is_enforced(settings, make_repo, monkeypatch):
 
     with pytest.raises(GraphLoadError, match="exceeded"):
         discovery.discover(path, get_settings())
+
+
+class TestDottedModuleSpecs:
+    """langgraph.json can declare a dotted import into an installed package
+    (`"deerflow.agents:make_lead_agent"`), not just a file path -- confirmed
+    necessary against a real repo, bytedance/deer-flow. `_parse_spec` itself
+    never imports anything (nothing here has deerflow installed); it just
+    has to recognize the shape and hand back a best-effort dotted location
+    for discover()'s sandboxed-install retry to actually resolve."""
+
+    def test_a_bare_dotted_name_with_no_slash_is_recognized_as_a_dotted_import(self, tmp_path):
+        location = discovery._parse_spec("deerflow.agents:make_lead_agent", tmp_path)
+        assert location is not None
+        assert location.is_dotted is True
+        assert location.module_ref == "deerflow.agents"
+        assert location.attr == "make_lead_agent"
+
+    def test_a_relative_file_path_is_not_treated_as_dotted_even_if_missing(self, tmp_path):
+        """`./missing.py:graph` has a slash after stripping `./` -- sorry,
+        has no slash once the leading `./` is stripped, but it DOES start
+        with `.`, which is what actually rules out the dotted branch. Either
+        way it must not silently become a dotted import guess."""
+        location = discovery._parse_spec("./missing.py:graph", tmp_path)
+        assert location is None
+
+    def test_a_nested_relative_path_with_a_slash_is_not_treated_as_dotted(self, tmp_path):
+        location = discovery._parse_spec("some/where/missing.py:graph", tmp_path)
+        assert location is None
+
+    def test_a_real_file_on_disk_still_wins_over_the_dotted_fallback(self, tmp_path, make_repo):
+        _, path = make_repo("dotted-vs-file", {"deerflow.py": "graph = None\n"})
+        # "deerflow:graph" has no slash and no leading dot -- it *could* read
+        # as dotted, but a literal deerflow.py exists, so the file path must
+        # win (checked before the dotted fallback in _parse_spec).
+        location = discovery._parse_spec("deerflow:graph", path)
+        assert location is not None
+        assert location.is_dotted is False
+        assert location.module_ref == str(path / "deerflow.py")
+
+
+class TestSandboxedInstallRetry:
+    """discover()'s fallback to sandbox.ensure_installed() on what looks
+    like a missing-dependency failure -- verified live against a real repo
+    (bytedance/deer-flow) end to end; these pin the decision logic with a
+    fake sandbox so the test suite doesn't need network access or a real
+    venv build."""
+
+    def test_looks_like_missing_dependency_matches_modulenotfounderror(self):
+        from errors import GraphLoadError
+
+        error = GraphLoadError("boom", traceback="...\nModuleNotFoundError: No module named 'deerflow'\n")
+        assert discovery._looks_like_missing_dependency(error) is True
+
+    def test_looks_like_missing_dependency_matches_importerror_without_cannot_import_name(self):
+        from errors import GraphLoadError
+
+        error = GraphLoadError("boom", traceback="ImportError: cannot load shared library")
+        assert discovery._looks_like_missing_dependency(error) is True
+
+    def test_looks_like_missing_dependency_excludes_cannot_import_name(self):
+        """A real bug in the target graph (a typo'd import from an already-
+        installed module) must NOT trigger a pointless sandboxed install --
+        that failure has nothing to do with a missing dependency."""
+        from errors import GraphLoadError
+
+        error = GraphLoadError("boom", traceback="ImportError: cannot import name 'Foo' from 'bar'")
+        assert discovery._looks_like_missing_dependency(error) is False
+
+    def test_looks_like_missing_dependency_excludes_unrelated_errors(self):
+        from errors import GraphLoadError
+
+        error = GraphLoadError("boom", traceback="RuntimeError: boom at import time")
+        assert discovery._looks_like_missing_dependency(error) is False
+
+    def test_a_missing_dependency_triggers_a_sandboxed_retry_that_succeeds(
+        self, settings, make_repo, monkeypatch
+    ):
+        _, path = make_repo(
+            "needs-install",
+            {
+                "agent.py": SIMPLE_AGENT,
+                "langgraph.json": '{"graphs": {"g": "./agent.py:graph"}}',
+            },
+        )
+
+        import sandbox
+
+        calls = {"ensure_installed": 0, "run_worker_pythons": []}
+        real_run_worker = discovery._run_worker
+
+        def fake_run_worker(location, settings_, *, python_executable=None):
+            calls["run_worker_pythons"].append(python_executable)
+            if python_executable is None:
+                from errors import GraphLoadError
+
+                raise GraphLoadError(
+                    "Importing the graph failed: ModuleNotFoundError: No module named 'nope'",
+                    traceback="ModuleNotFoundError: No module named 'nope'",
+                )
+            return real_run_worker(location, settings_, python_executable=None)
+
+        def fake_ensure_installed(start, repo, settings_):
+            calls["ensure_installed"] += 1
+            return sys.executable  # "sandboxed" interpreter = this interpreter, for the test
+
+        monkeypatch.setattr(discovery, "_run_worker", fake_run_worker)
+        monkeypatch.setattr(sandbox, "ensure_installed", fake_ensure_installed)
+
+        result = discovery.discover(path, settings)
+
+        assert calls["ensure_installed"] == 1
+        assert result.agent_nodes == ["triage_node", "refund_node"]
+        assert any("sandboxed venv" in w for w in result.warnings)
+
+    def test_when_sandbox_finds_nothing_to_install_the_original_error_propagates(
+        self, settings, make_repo, monkeypatch
+    ):
+        _, path = make_repo(
+            "needs-install-but-nothing-found",
+            {
+                "agent.py": SIMPLE_AGENT,
+                "langgraph.json": '{"graphs": {"g": "./agent.py:graph"}}',
+            },
+        )
+
+        import sandbox
+
+        def fake_run_worker(location, settings_, *, python_executable=None):
+            from errors import GraphLoadError
+
+            raise GraphLoadError(
+                "Importing the graph failed: ModuleNotFoundError: No module named 'nope'",
+                traceback="ModuleNotFoundError: No module named 'nope'",
+            )
+
+        monkeypatch.setattr(discovery, "_run_worker", fake_run_worker)
+        monkeypatch.setattr(sandbox, "ensure_installed", lambda start, repo, settings_: None)
+
+        with pytest.raises(GraphLoadError, match="No module named 'nope'"):
+            discovery.discover(path, settings)
+
+    def test_a_non_dependency_failure_never_triggers_a_sandboxed_install_attempt(
+        self, settings, make_repo, monkeypatch
+    ):
+        _, path = make_repo(
+            "broken-for-real",
+            {
+                "agent.py": "raise RuntimeError('boom at import time')\n",
+                "langgraph.json": '{"graphs": {"g": "./agent.py:graph"}}',
+            },
+        )
+
+        import sandbox
+
+        calls = {"ensure_installed": 0}
+        monkeypatch.setattr(
+            sandbox, "ensure_installed", lambda *a, **k: calls.__setitem__("ensure_installed", calls["ensure_installed"] + 1)
+        )
+
+        with pytest.raises(GraphLoadError, match="boom at import time"):
+            discovery.discover(path, settings)
+        assert calls["ensure_installed"] == 0
 
 
 class TestStaticMode:

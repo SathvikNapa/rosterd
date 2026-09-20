@@ -119,6 +119,8 @@ Two rules govern the merge:
 | `ROSTERD_IMPORT_TIMEOUT_SEC` | `60` | Ceiling on importing and introspecting the graph |
 | `ROSTERD_MAX_REPO_MB` | `100` | Reject clones larger than this |
 | `ROSTERD_LOCAL_REPO_ROOT` | — | **Dev only.** Resolves `http://localhost/<name>` to `<root>/<name>` |
+| `ROSTERD_SANDBOX_INSTALL_ENABLED` | `true` | Fall back to a throwaway venv + real `uv sync`/`pip install -e` when the fast import fails on a missing dependency (see `sandbox.py`) |
+| `ROSTERD_SANDBOX_INSTALL_TIMEOUT_SEC` | `120` | Ceiling on that install step — separate from `ROSTERD_IMPORT_TIMEOUT_SEC`, since a real dependency install is much slower than importing an already-installed module |
 
 `ROSTERD_LOCAL_REPO_ROOT` exists because `IngestRequest.repo_url` is an `HttpUrl` by contract, so a local fixture has to arrive dressed as an http URL. It is off unless set, and paths are containment-checked against the root.
 
@@ -134,6 +136,18 @@ For a demo where the repo is your own, `import` mode is the right default and gi
 
 This matters beyond hygiene: rosterd's pitch is that constraints belong outside the model, enforced at the boundary. An ingestion service that runs untrusted code without saying so undercuts that argument. Better to state the limit plainly.
 
+### Sandboxed dependency installation (`sandbox.py`)
+
+The fast path above (exec the target module against this service's own interpreter) only ever worked for a self-contained repo. A real repo with its own `pyproject.toml`/`uv.lock` — the common case once you point this at an arbitrary public GitHub repo instead of the bundled demo — fails with `No module named '<its own package>'` until its dependencies are actually installed somewhere.
+
+When the fast import fails with what looks like a missing dependency (`ModuleNotFoundError`, or an `ImportError` that isn't a broken import statement), discovery now retries once: it walks upward from the graph's own directory looking for a `pyproject.toml`/`setup.py`/`setup.cfg`, creates a **fresh, throwaway venv per ingest**, installs that project's own dependencies into it (`uv sync` when a `uv.lock` is present — not `uv pip install -e .`, which fails outright on a real `uv` workspace with multiple top-level packages — otherwise a plain `python -m venv` + `pip install -e .`), and re-imports the graph with *that* interpreter. It also resolves the two real `langgraph.json` graph-spec shapes: a file path, and a dotted import into an installed package (`"pkg.module:attr"`) — the second only ever resolves once the sandboxed install has actually happened.
+
+**Read the security tradeoff before relying on this against an untrusted URL** (full detail in `sandbox.py`'s module docstring): a venv isolates installed *package state* — one ingest's dependencies can't collide with another's — it does **not** isolate against malicious setup/build-time code execution, network exfiltration, or resource exhaustion during the install. Real isolation would be a throwaway, network-restricted container per ingest; that's real follow-up work, not something to half-build and call done. This is a deliberate, faster-to-ship middle ground, same posture as `import` mode itself: state the limit plainly rather than imply more safety than exists.
+
+It never turns a working fast-path ingest into a new way to fail: if there's nothing installable found, `uv`/`pip` is missing, or the install itself fails or times out, discovery just surfaces the *original* fast-path error, unchanged.
+
+**Verified live** against a real, non-trivial public repo (`bytedance/deer-flow`, a `uv`-workspace LangGraph project neither the demo repo nor any unit test fixture resembles) through three real, successive blockers, each confirmed by an actual failure and fixed in turn: a missing dependency (fixed by the sandboxed `uv sync` install), a dotted-module graph spec that only resolves once that install has happened (fixed by the dotted-import fallback), and a graph factory requiring a `RunnableConfig` argument rather than being zero-arg callable (fixed by an `obj({})` retry — `RunnableConfig` is an unvalidated `TypedDict`, so an empty dict is a reasonable stand-in purely for introspection). Ingestion got past all three. It then hit `deer-flow`'s own `config.yaml` requirement — a real runtime settings file the repo's own docs say to copy from `config.example.yaml` and fill in — which is a **genuine, application-specific requirement**, not an ingestion gap: no generic tool can synthesize another project's runtime configuration (API keys, model settings) on its behalf. That is the honest edge of what sandboxed installation can close.
+
 ## Layout
 
 | File | Purpose |
@@ -144,6 +158,7 @@ This matters beyond hygiene: rosterd's pitch is that constraints belong outside 
 | `service.py` | The ingest pipeline, end to end |
 | `repo.py` | Cloning, with the safety controls |
 | `discovery.py` | Locating the graph and merging the runtime and static passes |
+| `sandbox.py` | Fresh-venv dependency install + retry, when the fast import fails on a missing dependency |
 | `_introspect_worker.py` | Subprocess that imports the repo and calls `get_graph()` |
 | `astscan.py` | AST analysis: tool definitions, tool attribution, node wiring |
 | `constraints_loader.py` | Parsing and validating `constraints.yaml` |
@@ -155,7 +170,7 @@ This matters beyond hygiene: rosterd's pitch is that constraints belong outside 
 ## Known limitations
 
 - **Single process.** The store's index is read-modify-written without a lock. Fine for one uvicorn worker; multi-worker needs a lock or a real database.
-- **Target repo dependencies must be importable** by this service's interpreter in `import` mode. Install them into the same venv or the ingest fails with `graph_load_failed` naming the missing module.
+- **Target repo dependencies** are handled automatically now — see "Sandboxed dependency installation" above — but only up to what a generic tool can reasonably do. A repo with its own required runtime config file (API keys, settings it cannot run without — confirmed against `bytedance/deer-flow`'s `config.yaml`) still fails, honestly, on that app-specific requirement rather than a missing-package one.
 - **Tool attribution is name-based.** A tool reached through an alias or a registry lookup will be missed — declare it under `constraints.<node>.tools`.
 - **No retention policy.** Manifests accumulate, a few KB each. Deliberately no delete endpoint, since deleting one would break a kernel pinned to it.
 

@@ -16,15 +16,19 @@ from __future__ import annotations
 
 import ast
 import json
+import logging
 import subprocess
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import astscan
+import sandbox
 from config import Settings
 from errors import GraphLoadError, GraphNotFoundError
 from shared import GraphEdge, GraphSpec
+
+logger = logging.getLogger("rosterd.ingestion.discovery")
 
 #: LangGraph's synthetic entry/exit nodes. Part of the graph, never agents.
 SENTINELS = {"__start__", "__end__"}
@@ -71,7 +75,10 @@ class DiscoveryResult:
 
 @dataclass(frozen=True)
 class GraphLocation:
-    module_file: Path
+    #: An absolute file path (importable via spec_from_file_location), OR a
+    #: dotted module path (e.g. "deerflow.agents") when `is_dotted` -- see
+    #: `_parse_spec`'s docstring for why a spec can be either.
+    module_ref: str
     attr: str
     how: str
     #: What the worker subprocess chdir's into and puts on sys.path[0] --
@@ -79,26 +86,50 @@ class GraphLocation:
     #: when found there (see _find_langgraph_json): a real monorepo's
     #: package-relative imports (`from app.foo import bar`) resolve against
     #: THAT directory, not the outer clone root one or more levels above it.
-    project_root: Path = field(default=None)  # type: ignore[assignment]
-
-    def __post_init__(self) -> None:
-        if self.project_root is None:
-            object.__setattr__(self, "project_root", self.module_file.parent)
+    project_root: Path
+    is_dotted: bool = False
 
 
 def _parse_spec(spec: str, project_root: Path, *, how: str | None = None) -> GraphLocation | None:
-    """Turn a 'path/to/mod.py:attr' or 'pkg.mod:attr' spec into a location,
-    resolved relative to `project_root` -- the repo root for a top-level
-    spec, or a nested langgraph.json's own directory (see locate_graph)."""
+    """Turn a langgraph.json graph spec into a location, resolved relative
+    to `project_root` -- the repo root for a top-level spec, or a nested
+    langgraph.json's own directory (see locate_graph).
+
+    A spec is one of two real, both-documented LangGraph Server shapes:
+    * `'./path/to/mod.py:attr'` -- a file path, resolved and returned
+      directly if it exists.
+    * `'pkg.module:attr'` -- a dotted import into an *installed* package,
+      which this function cannot verify by itself (nothing here imports
+      anything) -- confirmed necessary against a real repo,
+      bytedance/deer-flow's `"deerflow.agents:make_lead_agent"`, where
+      `deerflow` only exists once its own workspace package
+      (backend/packages/harness/) is actually installed. Returned as a
+      best-effort `is_dotted=True` location instead of `None`; the caller
+      (discover()'s sandboxed-install retry) is what actually gets a
+      chance to make it resolve, by installing the project first and
+      retrying with that venv's interpreter.
+    """
     if ":" not in spec:
         return None
     raw_path, attr = spec.rsplit(":", 1)
-    raw_path = raw_path.strip().lstrip("./")
-    candidate = project_root / raw_path
+    raw_path = raw_path.strip()
+    attr = attr.strip()
+
+    file_like = raw_path.lstrip("./")
+    candidate = project_root / file_like
     if not candidate.suffix:
-        candidate = project_root / (raw_path.replace(".", "/") + ".py")
+        candidate = project_root / (file_like.replace(".", "/") + ".py")
     if candidate.is_file():
-        return GraphLocation(candidate, attr.strip(), how or spec, project_root=project_root)
+        return GraphLocation(str(candidate), attr, how or spec, project_root=project_root)
+
+    # Didn't resolve to a literal file (checked against the ORIGINAL
+    # raw_path, not the reassigned `candidate` above, which always ends in
+    # .py by this point and would make this check vacuous). A bare name
+    # with no slash and no leading dot reads as a dotted import into an
+    # installed package, not a file path that simply doesn't exist yet --
+    # e.g. "deerflow.agents", not "./missing.py".
+    if "/" not in raw_path and not raw_path.startswith("."):
+        return GraphLocation(raw_path, attr, how or spec, project_root=project_root, is_dotted=True)
     return None
 
 
@@ -183,7 +214,7 @@ def locate_graph(repo: Path, settings: Settings) -> GraphLocation:
         if not path.is_file():
             continue
         for name in _compiled_assignments(path):
-            return GraphLocation(path, name, f"compile() assignment in {path.name}")
+            return GraphLocation(str(path), name, f"compile() assignment in {path.name}", project_root=path.parent)
 
     # 4. A conventional name in a conventional file.
     for rel in _CANDIDATE_FILES:
@@ -203,7 +234,7 @@ def locate_graph(repo: Path, settings: Settings) -> GraphLocation:
         }
         for attr in _CANDIDATE_ATTRS:
             if attr in assigned:
-                return GraphLocation(path, attr, f"conventional name in {rel}")
+                return GraphLocation(str(path), attr, f"conventional name in {rel}", project_root=path.parent)
 
     raise GraphNotFoundError(
         "No compiled LangGraph graph found. Add a langgraph.json, or set "
@@ -212,16 +243,33 @@ def locate_graph(repo: Path, settings: Settings) -> GraphLocation:
     )
 
 
-def _run_worker(location: GraphLocation, settings: Settings) -> dict:
+def _run_worker(location: GraphLocation, settings: Settings, *, python_executable: str | None = None) -> dict:
     """Import the graph in a child process and get its structure back.
 
     The worker chdir's into and sys.path-inserts `location.project_root`,
     not necessarily the outer repo root -- a nested langgraph.json's
     package-relative imports need to resolve against ITS directory (see
-    GraphLocation.project_root / _find_langgraph_json)."""
+    GraphLocation.project_root / _find_langgraph_json).
+
+    `python_executable` defaults to the ingestion service's own interpreter
+    (fast, no install step -- works for a self-contained repo). `discover()`
+    passes a sandboxed venv's interpreter instead on a retry after
+    sandbox.ensure_installed() -- see its module docstring.
+
+    A `dotted:` prefix on the module-ref argv tells the worker to
+    `importlib.import_module()` it instead of loading it as a file --
+    see GraphLocation.is_dotted / _parse_spec's docstring for why a
+    langgraph.json spec can be either."""
+    module_ref = f"dotted:{location.module_ref}" if location.is_dotted else location.module_ref
     try:
         completed = subprocess.run(
-            [sys.executable, str(_WORKER), str(location.project_root), str(location.module_file), location.attr],
+            [
+                python_executable or sys.executable,
+                str(_WORKER),
+                str(location.project_root),
+                module_ref,
+                location.attr,
+            ],
             capture_output=True,
             text=True,
             timeout=settings.import_timeout_sec,
@@ -290,6 +338,46 @@ def _static_has_interrupt(scan: astscan.RepoScan, node_name: str) -> bool:
     return astscan.calls_interrupt(func)
 
 
+def _looks_like_missing_dependency(error: GraphLoadError) -> bool:
+    """Heuristic: does this failure look like it would be fixed by actually
+    installing the repo's own dependencies, rather than e.g. a genuine bug
+    in the target graph? Checked against the traceback, not just the
+    top-level message -- the failure often surfaces several frames deep, in
+    a file the real target transitively imports, not the target itself
+    (confirmed against a real repo: bytedance/deer-flow's traceback bottoms
+    out in an unrelated notification-channel module, not its own graph
+    factory)."""
+    text = str(error.message) + str(error.details.get("traceback", ""))
+    return "ModuleNotFoundError" in text or ("ImportError" in text and "cannot import name" not in text)
+
+
+def _discover_import(repo: Path, location: GraphLocation, settings: Settings, warnings: list[str]) -> dict:
+    """The fast path (the ingestion service's own interpreter, no install
+    step), with one fallback: a sandboxed install-and-retry when that fails
+    on what looks like a missing dependency -- a repo that needs
+    `pip install -e .` / `uv sync` before its own graph module is even
+    importable. See sandbox.py's module docstring for what this does and
+    does not isolate against."""
+    try:
+        return _run_worker(location, settings)
+    except GraphLoadError as exc:
+        original = exc
+        if not _looks_like_missing_dependency(exc):
+            raise
+
+    logger.info("fast import failed on a missing dependency; trying a sandboxed install")
+    python = sandbox.ensure_installed(location.project_root, repo, settings)
+    if python is None:
+        raise original
+
+    warnings.append(
+        "Discovery installed this repo's own dependencies into a sandboxed venv before its "
+        "graph module was importable -- see rosterd-ingestion/sandbox.py for what that "
+        "does and does not isolate against."
+    )
+    return _run_worker(location, settings, python_executable=python)
+
+
 def discover(repo: Path, settings: Settings) -> DiscoveryResult:
     """Discover the graph, its nodes, and each node's tools."""
     repo = repo.resolve()
@@ -302,7 +390,7 @@ def discover(repo: Path, settings: Settings) -> DiscoveryResult:
         return _discover_static(repo, scan, warnings)
 
     location = locate_graph(repo, settings)
-    payload = _run_worker(location, settings)
+    payload = _discover_import(repo, location, settings, warnings)
     conditions = _condition_map(scan)
 
     nodes: dict[str, DiscoveredNode] = {}

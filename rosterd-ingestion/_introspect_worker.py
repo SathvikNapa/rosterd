@@ -96,23 +96,47 @@ def _describe_node(node: Any) -> dict[str, Any]:
     return info
 
 
-def _load_attr(repo_path: str, module_file: str, attr: str) -> Any:
-    spec = importlib.util.spec_from_file_location("_rosterd_target", module_file)
+def _load_module(module_ref: str) -> Any:
+    """`module_ref` is either a `dotted:pkg.module` reference -- a real
+    Python import, only resolvable once the target repo's own dependencies
+    are actually installed (see sandbox.py) -- or a plain file path, loaded
+    directly regardless of whether it sits on any package's import path."""
+    if module_ref.startswith("dotted:"):
+        return importlib.import_module(module_ref[len("dotted:") :])
+    spec = importlib.util.spec_from_file_location("_rosterd_target", module_ref)
     if spec is None or spec.loader is None:
-        raise ImportError(f"Cannot load a module spec from {module_file}")
+        raise ImportError(f"Cannot load a module spec from {module_ref}")
     module = importlib.util.module_from_spec(spec)
     sys.modules["_rosterd_target"] = module
     spec.loader.exec_module(module)
+    return module
+
+
+def _load_attr(module_ref: str, attr: str) -> Any:
+    module = _load_module(module_ref)
 
     obj = getattr(module, attr, None)
     if obj is None:
-        raise AttributeError(f"{module_file} has no attribute {attr!r}")
+        raise AttributeError(f"{module_ref} has no attribute {attr!r}")
 
     # A repo may export the builder rather than the compiled graph, or a
-    # zero-arg factory that returns one. Accept all three.
+    # factory that returns one. Accept all three.
     if not hasattr(obj, "get_graph"):
         if callable(obj):
-            obj = obj()
+            try:
+                obj = obj()
+            except TypeError:
+                # A real LangGraph Server deployment commonly exports a
+                # factory taking a RunnableConfig, resolved by the platform
+                # at request time -- not a zero-arg callable (confirmed
+                # against a real repo: bytedance/deer-flow's
+                # make_lead_agent(config)). RunnableConfig is a TypedDict,
+                # not validated at runtime, so an empty dict is a
+                # reasonable stand-in purely for introspection -- this
+                # won't always work (a factory that reads specific keys
+                # eagerly still fails), but costs nothing to try before
+                # giving up.
+                obj = obj({})
         if hasattr(obj, "compile") and not hasattr(obj, "get_graph"):
             obj = obj.compile()
     if not hasattr(obj, "get_graph"):
@@ -129,7 +153,7 @@ def main() -> int:
     sys.path = [p for p in sys.path if p not in ("", os.path.dirname(os.path.abspath(__file__)))]
 
     try:
-        compiled = _load_attr(repo_path, module_file, attr)
+        compiled = _load_attr(module_file, attr)
         drawable = compiled.get_graph()
 
         nodes = {}

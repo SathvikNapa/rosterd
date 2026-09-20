@@ -61,6 +61,21 @@ class Settings:
     #: Wall-clock ceiling on importing + introspecting the graph.
     import_timeout_sec: int = field(default_factory=lambda: _env_int("ROSTERD_IMPORT_TIMEOUT_SEC", 60))
 
+    #: sandbox.py: install a repo's own dependencies into a throwaway venv
+    #: and retry introspection with THAT interpreter, when the fast direct
+    #: import fails on a missing module. See sandbox.py's module docstring
+    #: for the security tradeoff this accepts -- a venv isolates package
+    #: state, not code execution.
+    sandbox_install_enabled: bool = field(
+        default_factory=lambda: _env_bool("ROSTERD_SANDBOX_INSTALL_ENABLED", True)
+    )
+    #: Wall-clock ceiling on the install itself (dependency resolution +
+    #: download), separate from import_timeout_sec -- a real install is
+    #: much slower than importing an already-installed module.
+    sandbox_install_timeout_sec: int = field(
+        default_factory=lambda: _env_int("ROSTERD_SANDBOX_INSTALL_TIMEOUT_SEC", 120)
+    )
+
     #: If non-empty, only these hostnames may be cloned.
     allowed_hosts: list[str] = field(default_factory=lambda: _env_list("ROSTERD_ALLOWED_HOSTS"))
 
