@@ -43,3 +43,12 @@ class RunNotFoundError(KernelError):
 
     status_code = 404
     code = "run_not_found"
+
+
+class RunNotResumableError(KernelError):
+    """POST /runs/{run_id}/resume against a run that isn't currently
+    paused (already done/killed, or was never issued), or whose resume
+    context (paused thread_id, instance, manifest entry) no longer exists."""
+
+    status_code = 409
+    code = "run_not_resumable"

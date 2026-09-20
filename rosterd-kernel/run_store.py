@@ -26,6 +26,18 @@ class _RunMeta:
     agent_id: str
     current_instance_id: str | None = None
     kill_requested: bool = False
+    #: Set on pause() -- the LangGraph checkpoint id demo-agent's /resume
+    #: needs to continue this exact run. None for any run that never paused.
+    thread_id: str | None = None
+    #: The task text as dispatched, kept so a reviewer (human or agent)
+    #: deciding a paused run later has the same context the original
+    #: dispatch did -- the wire-contract RunResponse itself carries no task
+    #: fields (see this module's docstring), so this is the only copy.
+    task_text: str = ""
+    #: Set on pause() -- demo-agent's own interrupt() reason, e.g. "refund
+    #: on flagged/high-value order needs human approval". Surfaced to
+    #: whoever (human or reviewer agent) is about to decide.
+    pause_reason: str = ""
 
 
 class RunStore:
@@ -34,7 +46,7 @@ class RunStore:
         self._responses: dict[str, RunResponse] = {}
         self._meta: dict[str, _RunMeta] = {}
 
-    def create(self, run_id: str, agent_id: str) -> RunResponse:
+    def create(self, run_id: str, agent_id: str, *, task_text: str = "") -> RunResponse:
         with self._lock:
             response = RunResponse(
                 run_id=run_id,
@@ -43,7 +55,7 @@ class RunStore:
                 started_at=datetime.now(timezone.utc),
             )
             self._responses[run_id] = response
-            self._meta[run_id] = _RunMeta(agent_id=agent_id)
+            self._meta[run_id] = _RunMeta(agent_id=agent_id, task_text=task_text)
             return response
 
     def set_current_instance(self, run_id: str, instance_id: str | None) -> None:
@@ -98,6 +110,40 @@ class RunStore:
             response.violation = violation
             response.trace_id = trace_id or response.trace_id
             return response
+
+    def pause(self, run_id: str, *, thread_id: str, reason: str, output: str, trace_id: str | None = None) -> RunResponse | None:
+        """A run interrupted for human/reviewer approval -- not finished,
+        not killed, resumable via `thread_id`. Same "killed is sticky" guard
+        as finish(): a manual kill racing the pause must win."""
+        with self._lock:
+            response = self._responses.get(run_id)
+            if response is None:
+                return None
+            if response.status == RunStatus.killed:
+                return response
+            response.status = RunStatus.paused
+            response.output = output
+            response.trace_id = trace_id or response.trace_id
+            meta = self._meta.get(run_id)
+            if meta is not None:
+                meta.thread_id = thread_id
+                meta.pause_reason = reason
+            return response
+
+    def pause_context(self, run_id: str) -> tuple[str, str, str] | None:
+        """(thread_id, task_text, pause_reason) for resuming a paused run,
+        or None if this run never paused (or was never issued)."""
+        with self._lock:
+            meta = self._meta.get(run_id)
+            if meta is None or meta.thread_id is None:
+                return None
+            return meta.thread_id, meta.task_text, meta.pause_reason
+
+    def paused_run_ids(self) -> list[str]:
+        """Every run currently awaiting approval -- what the reviewer loop
+        polls."""
+        with self._lock:
+            return [run_id for run_id, r in self._responses.items() if r.status == RunStatus.paused]
 
     def force_kill(self, run_id: str, *, reason: str) -> RunResponse | None:
         """Used by POST /runs/{run_id}/kill: unconditionally marks the run

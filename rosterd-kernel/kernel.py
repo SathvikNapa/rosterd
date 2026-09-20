@@ -59,6 +59,19 @@ class KillResponse(BaseModel):
     reason: str
 
 
+class ResumeRequest(BaseModel):
+    """POST /runs/{run_id}/resume's body. `reviewer` is free text identifying
+    who decided -- "human" by default, or an agent id (e.g.
+    "reviewer-agent") when reviewer.py's ReviewerLoop decided autonomously.
+    Never a person's name for the same reason `assignees` shouldn't be
+    (see kernel.py's DispatchRequest) -- this kernel tracks WHICH AGENT or
+    role made a call, not who's logged in, since nothing here has auth."""
+
+    approved: bool
+    reviewer: str = "human"
+    reason: str | None = None
+
+
 class PolicyUpdateRequest(BaseModel):
     rule: str
     value: float | str | bool

@@ -18,6 +18,14 @@ Plus small additive debug endpoints, same spirit as rosterd-ingestion's own
     GET  /policy                             current policy overrides
     GET  /healthz                            liveness + effective settings
 
+Also additive, but load-bearing rather than debug-only: `POST
+/runs/{run_id}/resume` -- not in the original brief, added because nothing
+existed to unstick a run demo-agent's own interrupt() paused (see
+dispatch.py's module docstring). Called either by a human (via this
+endpoint directly) or by reviewer.py's ReviewerLoop deciding on its own.
+
+    POST /runs/{run_id}/resume               approve/deny a paused run
+
 `create_app()` is a factory rather than a single module-level app because,
 unlike ingestion, the kernel is genuinely stateful across requests (the
 instance registry, the manifest index, the scaler thread) -- tests build
@@ -48,6 +56,7 @@ from kernel import (
     KillResponse,
     PolicyUpdateRequest,
     PolicyUpdateResponse,
+    ResumeRequest,
     ScaleRequest,
     ScaleResponse,
     SimulateLoadRequest,
@@ -57,6 +66,8 @@ from manifest import ManifestIndex
 from manifest_source import IngestionPollManifestSource, ManifestSource, ManifestSubscription, StaticManifestSource
 from policy import PolicyStore
 from registry import InstanceRegistry
+from reviewer import ReviewerLoop
+from reviewer import llm_key_present as reviewer_llm_key_present
 from run_store import RunStore
 from scaler import ScalerLoop
 from simulate import simulate_load
@@ -83,6 +94,10 @@ class Container:
     coordinator_client: CoordinatorClient
     dispatcher: Dispatcher
     scaler: ScalerLoop
+    #: None when no provider key is configured or ROSTERD_KERNEL_REVIEWER_ENABLED=false
+    #: -- a paused run then just waits for a human to call POST /runs/{id}/resume,
+    #: same as before this existed.
+    reviewer: ReviewerLoop | None
 
 
 def build_container(
@@ -135,6 +150,14 @@ def build_container(
         settings=settings,
     )
 
+    reviewer = (
+        ReviewerLoop(run_store=run_store, dispatcher=dispatcher, settings=settings)
+        if settings.reviewer_enabled and reviewer_llm_key_present()
+        else None
+    )
+    if settings.reviewer_enabled and reviewer is None:
+        logger.info("reviewer agent disabled: no GROK_API_KEY/XAI_API_KEY/ANTHROPIC_API_KEY configured")
+
     return Container(
         settings=settings,
         telemetry=telemetry,
@@ -150,6 +173,7 @@ def build_container(
         coordinator_client=coordinator_client,
         dispatcher=dispatcher,
         scaler=scaler,
+        reviewer=reviewer,
     )
 
 
@@ -161,8 +185,12 @@ def create_app(settings: Settings | None = None, *, container: Container | None 
     async def lifespan(_app: FastAPI):
         container.manifest_subscription.start()
         container.scaler.start()
+        if container.reviewer is not None:
+            container.reviewer.start()
         logger.info("kernel started: site=%s docker_mode=%s", settings.site_id, settings.docker_mode)
         yield
+        if container.reviewer is not None:
+            container.reviewer.stop()
         container.scaler.stop()
         container.manifest_subscription.stop()
 
@@ -229,6 +257,16 @@ def create_app(settings: Settings | None = None, *, container: Container | None 
             )
         container.run_store.force_kill(run_id, reason="manual kill requested via POST /runs/{run_id}/kill")
         return KillResponse(run_id=run_id, reason="manual kill requested")
+
+    @fastapi_app.post("/runs/{run_id}/resume")
+    def post_resume_run(run_id: str, request: ResumeRequest):
+        container.dispatcher.resume_run(
+            run_id, approved=request.approved, reviewer=request.reviewer, reason=request.reason
+        )
+        response = container.run_store.get(run_id)
+        if response is None:
+            raise RunNotFoundError(f"no run with id {run_id!r}", run_id=run_id)
+        return response
 
     @fastapi_app.post("/policy")
     def post_policy(request: PolicyUpdateRequest) -> PolicyUpdateResponse:

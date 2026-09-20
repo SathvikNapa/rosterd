@@ -20,6 +20,10 @@ class RunStatus(str, Enum):
     working = "working"
     done = "done"
     killed = "killed"
+    #: Interrupted for human/reviewer approval (langgraph.types.interrupt()).
+    #: Distinct from `done` -- a paused run has no tool_calls yet and nothing
+    #: has actually happened; see rosterd-kernel/dispatch.py's resume path.
+    paused = "paused"
 
 
 class SiteStatus(str, Enum):

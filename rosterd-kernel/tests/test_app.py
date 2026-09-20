@@ -12,14 +12,23 @@ from conftest import FakeHttpxResponse
 
 
 def dispatch(client, agent_id="fulfillment", *, text="reserve some inventory", assignees=None):
+    # assignees are agent ids collaborating on the task, never a person's
+    # name (this kernel has no auth/identity concept at all) -- defaults to
+    # the dispatched agent itself when a test doesn't care.
     return client.post(
         "/dispatch",
         json={
             "agent_id": agent_id,
             "task": {"id": "t1", "title": "test task", "description": text},
-            "assignees": assignees or ["me"],
+            "assignees": assignees or [agent_id],
         },
     )
+
+
+def pending_approval(thread_id: str = "thread-1", reason: str = "needs a human") -> dict:
+    """Shaped exactly like demo-agent's main.py `_to_response` on a paused
+    run: `f"PENDING_HUMAN_APPROVAL [thread_id={thread_id}]: {reason}"`."""
+    return {"output": f"PENDING_HUMAN_APPROVAL [thread_id={thread_id}]: {reason}", "tool_calls": [], "next_node": None}
 
 
 class TestHealthAndManifest:
@@ -99,6 +108,89 @@ class TestConstraintKill:
         # The offending instance was killed, not returned to idle.
         instances = client.get("/agents/fulfillment/instances").json()["instances"]
         assert instances == []
+
+
+class TestPauseAndResume:
+    """Previously a paused run (demo-agent's interrupt()) was silently
+    recorded as `done` -- indistinguishable from actually finishing, and
+    with no way to ever unstick it. POST /runs/{id}/resume plus RunStatus.paused
+    close that gap. See dispatch.py's module docstring and run_store.py's
+    pause() for the fuller story."""
+
+    def test_a_pending_approval_response_pauses_the_run_not_finishes_it(self, client, fake_demo_agent):
+        fake_demo_agent.set(lambda payload: FakeHttpxResponse(200, pending_approval()))
+        response = dispatch(client)
+        run_id = response.json()["run_id"]
+
+        run = client.get(f"/runs/{run_id}").json()
+        assert run["status"] == "paused"
+        assert "PENDING_HUMAN_APPROVAL" in run["output"]
+
+        # The instance went back to idle -- a paused run isn't burning a
+        # slot in the pool while it waits.
+        instances = client.get("/agents/fulfillment/instances").json()["instances"]
+        assert instances[0]["status"] == "idle"
+
+    def test_resuming_approved_and_within_policy_finishes_done(self, client, fake_demo_agent):
+        fake_demo_agent.set(lambda payload: FakeHttpxResponse(200, pending_approval()))
+        run_id = dispatch(client).json()["run_id"]
+
+        fake_demo_agent.set(
+            lambda payload: FakeHttpxResponse(
+                200, {"output": "reserved", "tool_calls": [{"tool": "reserve_inventory", "args": {"qty": 3}}]}
+            )
+        )
+        resumed = client.post(f"/runs/{run_id}/resume", json={"approved": True, "reviewer": "human"})
+        assert resumed.status_code == 200
+        assert resumed.json()["status"] == "done"
+        assert resumed.json()["output"] == "reserved"
+
+    def test_resuming_approved_but_over_the_cap_still_gets_killed(self, client, fake_demo_agent):
+        """The centerpiece guarantee: approval (from a human or the reviewer
+        agent) lifts demo-agent's own interrupt() gate, never the kernel's
+        own constraint check. An over-cap tool call still dies."""
+        fake_demo_agent.set(lambda payload: FakeHttpxResponse(200, pending_approval()))
+        run_id = dispatch(client).json()["run_id"]
+
+        fake_demo_agent.set(
+            lambda payload: FakeHttpxResponse(
+                200,
+                {"output": "approved anyway", "tool_calls": [{"tool": "reserve_inventory", "args": {"qty": 999}}]},
+            )
+        )
+        resumed = client.post(f"/runs/{run_id}/resume", json={"approved": True, "reviewer": "reviewer-agent"})
+        assert resumed.status_code == 200
+        body = resumed.json()
+        assert body["status"] == "killed"
+        assert body["violation"]["rule"] == "tool_calls[*].args.qty lte 50"
+
+    def test_resuming_denied_finishes_done_with_no_tool_call(self, client, fake_demo_agent):
+        """Denial is demo-agent's own graph logic (refund_node.py: 'Refund
+        denied by human reviewer.', no tool call) -- the kernel just settles
+        whatever comes back, same as any other response with no tool_calls."""
+        fake_demo_agent.set(lambda payload: FakeHttpxResponse(200, pending_approval()))
+        run_id = dispatch(client).json()["run_id"]
+
+        fake_demo_agent.set(
+            lambda payload: FakeHttpxResponse(200, {"output": "denied by reviewer", "tool_calls": []})
+        )
+        resumed = client.post(f"/runs/{run_id}/resume", json={"approved": False, "reviewer": "reviewer-agent"})
+        assert resumed.status_code == 200
+        assert resumed.json()["status"] == "done"
+        assert resumed.json()["output"] == "denied by reviewer"
+
+    def test_resuming_a_run_that_never_paused_is_rejected(self, client, fake_demo_agent):
+        fake_demo_agent.set(lambda payload: FakeHttpxResponse(200, {"output": "ok", "tool_calls": []}))
+        run_id = dispatch(client).json()["run_id"]  # finishes done immediately, never pauses
+
+        resumed = client.post(f"/runs/{run_id}/resume", json={"approved": True})
+        assert resumed.status_code == 409
+        assert resumed.json()["code"] == "run_not_resumable"
+
+    def test_resuming_an_unknown_run_id_404s(self, client):
+        resumed = client.post("/runs/does-not-exist/resume", json={"approved": True})
+        assert resumed.status_code == 404
+        assert resumed.json()["code"] == "run_not_found"
 
 
 class TestTimeoutKill:

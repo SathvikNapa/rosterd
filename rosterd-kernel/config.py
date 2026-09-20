@@ -158,6 +158,18 @@ class Settings:
         default_factory=lambda: os.environ.get("ROSTERD_KERNEL_SPACETIMEDB_TOKEN") or None
     )
 
+    # ---- Reviewer agent (reviewer.py) ---------------------------------------------
+    # A second, autonomous agent that decides runs paused at an interrupt(),
+    # instead of leaving them stuck until a human happens to call
+    # POST /runs/{run_id}/resume. Auto-enabled whenever a provider key is
+    # present (same convention as rosterd-demo-agent's AGENT_MODE=llm gate)
+    # unless explicitly turned off -- no separate opt-in flag to forget.
+    reviewer_enabled: bool = field(default_factory=lambda: _env_bool("ROSTERD_KERNEL_REVIEWER_ENABLED", True))
+    reviewer_interval_sec: float = field(
+        default_factory=lambda: _env_float("ROSTERD_KERNEL_REVIEWER_INTERVAL_SEC", 4.0)
+    )
+    reviewer_model: str | None = field(default_factory=lambda: os.environ.get("ROSTERD_KERNEL_REVIEWER_MODEL") or None)
+
     # ---- OpenTelemetry -----------------------------------------------------------
     otel_enabled: bool = field(default_factory=lambda: _env_bool("ROSTERD_KERNEL_OTEL_ENABLED", True))
     otel_endpoint: str = field(

@@ -12,6 +12,20 @@ returning, not that it queued something for later. GET /runs/{run_id} still
 exists for polling/detail (trace_id, violation, output) and is what the
 Task Run & Violation screen actually renders; POST /dispatch is the
 synchronous trigger for it.
+
+One real exception to "runs to completion before returning": a node that
+calls interrupt() (refund_node.py, for fraud/high-value orders) pauses the
+run instead, and POST /dispatch returns while it's still `paused` --
+nothing was actually completed yet, on purpose. Getting it unstuck is
+`resume_run()` below, called either by a human via POST
+/runs/{run_id}/resume or by reviewer.py's ReviewerLoop deciding on its own.
+Previously there was no resume path at all: a paused run just got marked
+`done` (see `_settle`'s docstring), indistinguishable from actually
+finishing -- the misdirection-refund demo this system's narrative leans on
+was consequently unreachable end to end. Fixed by giving `paused` its own
+RunStatus (shared.py) and a real path back through demo-agent's own
+`/resume` endpoint (which already existed and worked; nothing in the
+kernel ever called it).
 """
 from __future__ import annotations
 
@@ -23,9 +37,15 @@ from datetime import datetime, timezone
 from budget import BudgetTracker
 from constraints import evaluate_all
 from coordinator_client import CoordinatorClient, EventRequest
-from demo_agent_client import DemoAgentClient, DemoAgentError, DemoAgentTimeout
+from demo_agent_client import (
+    PENDING_HUMAN_APPROVAL_RE,
+    DemoAgentClient,
+    DemoAgentError,
+    DemoAgentTimeout,
+    InvokeResponse,
+)
 from docker_backend import DockerBackend
-from errors import AgentNotFoundError, ManifestNotReadyError
+from errors import AgentNotFoundError, ManifestNotReadyError, RunNotFoundError, RunNotResumableError
 from kernel import DispatchRequest, DispatchResponse, DispatchStatus, InstanceStatus
 from killer import kill as kill_instance
 from manifest import ManifestIndex
@@ -100,7 +120,7 @@ class Dispatcher:
                     ),
                 )
 
-            self._run_store.create(run_id, request.agent_id)
+            self._run_store.create(run_id, request.agent_id, task_text=request.task.description or request.task.title)
             self._run_store.set_current_instance(run_id, instance.instance_id)
             self._budget_tracker.start(run_id)
 
@@ -200,34 +220,143 @@ class Dispatcher:
                 )
             return
 
+        self._settle(run_id, request.agent_id, entry, instance, response, span)
+
+    def _settle(self, run_id, agent_id: str, entry, instance, response: InvokeResponse, span) -> None:
+        """Given a real InvokeResponse from the demo agent, either pause the
+        run (its interrupt() fired again) or run the constraint/budget
+        checks a fresh response always gets, then finish done/killed.
+        Shared between `_run_dispatch` (the first call) and `resume_run`
+        (continuing a paused one) so resuming is held to exactly the same
+        enforcement a fresh dispatch would be -- a reviewer agent (or a
+        human) approving something does not bypass the kernel's own
+        constraint check, only demo-agent's interrupt() gate.
+        """
+        pending = PENDING_HUMAN_APPROVAL_RE.match(response.output or "")
+        if pending and not response.tool_calls:
+            thread_id, reason = pending.group(1), pending.group(2)
+            self._registry.set_status(agent_id, instance.instance_id, InstanceStatus.idle)
+            trace_id = self._telemetry.current_trace_id()
+            self._run_store.pause(run_id, thread_id=thread_id, reason=reason, output=response.output, trace_id=trace_id)
+            span.set_attribute("rosterd.paused", True)
+            self._coordinator_client.post_event(
+                EventRequest(
+                    site_id=self._settings.site_id,
+                    run_id=run_id,
+                    agent_id=agent_id,
+                    status=RunStatus.paused,
+                    trace_id=trace_id,
+                    timestamp=datetime.now(timezone.utc),
+                )
+            )
+            return
+
         self._budget_tracker.record_tool_calls(run_id, len(response.tool_calls))
         self._budget_tracker.finish(run_id)
 
         violation = self._budget_tracker.check(run_id)
         if violation is None:
             with self._telemetry.span(
-                "constraint_check", **{"rosterd.agent_id": request.agent_id, "rosterd.rule_count": len(entry.constraints)}
+                "constraint_check", **{"rosterd.agent_id": agent_id, "rosterd.rule_count": len(entry.constraints)}
             ) as constraint_span:
                 violation = evaluate_all(entry.constraints, response, policy=self._policy_store)
                 constraint_span.set_attribute("rosterd.violated", violation is not None)
 
         if violation is not None:
-            self._finish_killed(run_id, request.agent_id, instance, violation, span)
+            self._finish_killed(run_id, agent_id, instance, violation, span)
             return
 
-        self._registry.set_status(request.agent_id, instance.instance_id, InstanceStatus.idle)
+        self._registry.set_status(agent_id, instance.instance_id, InstanceStatus.idle)
         trace_id = self._telemetry.current_trace_id()
         self._run_store.finish(run_id, status=RunStatus.done, output=response.output, trace_id=trace_id)
         self._coordinator_client.post_event(
             EventRequest(
                 site_id=self._settings.site_id,
                 run_id=run_id,
-                agent_id=request.agent_id,
+                agent_id=agent_id,
                 status=RunStatus.done,
                 trace_id=trace_id,
                 timestamp=datetime.now(timezone.utc),
             )
         )
+
+    # ----------------------------------------------------------- resume
+
+    def resume_run(self, run_id: str, *, approved: bool, reviewer: str = "human", reason: str | None = None) -> None:
+        """Continues a run paused at an interrupt() -- called both by
+        POST /runs/{run_id}/resume (a human, via the API) and by
+        reviewer.py's ReviewerLoop (an agent, deciding autonomously). Same
+        path either way: calls demo-agent's real /resume, then re-enforces
+        the confirmed manifest's constraints through the exact same
+        `_settle` a fresh dispatch uses -- an approval from either a human
+        or the reviewer agent still gets killed if it actually violates the
+        contract; approval only lifts demo-agent's interrupt() gate, never
+        the kernel's own check.
+        """
+        run = self._run_store.get(run_id)
+        if run is None:
+            raise RunNotFoundError(f"no run with id {run_id!r}", run_id=run_id)
+        if run.status != RunStatus.paused:
+            raise RunNotResumableError(
+                f"run {run_id!r} is not paused (status: {run.status.value})", run_id=run_id, status=run.status.value
+            )
+
+        context = self._run_store.pause_context(run_id)
+        if context is None:
+            raise RunNotResumableError(f"run {run_id!r} has no resume context on record", run_id=run_id)
+        thread_id, _task_text, _pause_reason = context
+
+        located = self._run_store.instance_for(run_id)
+        if located is None or located[1] is None:
+            raise RunNotResumableError(f"run {run_id!r} has no instance on record to resume", run_id=run_id)
+        agent_id, instance_id = located
+
+        instance = self._registry.find(agent_id, instance_id)
+        if instance is None:
+            raise RunNotResumableError(
+                f"run {run_id!r}'s instance {instance_id!r} no longer exists (killed or scaled down)", run_id=run_id
+            )
+
+        entry = self._manifest_index.get(agent_id)
+        if entry is None:
+            raise RunNotResumableError(f"agent {agent_id!r} is no longer in the confirmed manifest", run_id=run_id)
+
+        base_url = self._docker_backend.invoke_base_url(instance)
+        with self._telemetry.span(
+            "resume",
+            **{
+                "rosterd.agent_id": agent_id,
+                "rosterd.run_id": run_id,
+                "rosterd.approved": approved,
+                "rosterd.reviewer": reviewer,
+            },
+        ) as span:
+            try:
+                response = self._demo_agent_client.resume(
+                    base_url, thread_id, approved, timeout=self._settings.dispatch_timeout_sec
+                )
+            except DemoAgentTimeout:
+                self._finish_killed(
+                    run_id,
+                    agent_id,
+                    instance,
+                    Violation(
+                        rule="resume.timeout", expected=f"<= {self._settings.dispatch_timeout_sec}s", actual="timed out"
+                    ),
+                    span,
+                )
+                return
+            except DemoAgentError as exc:
+                self._finish_killed(
+                    run_id,
+                    agent_id,
+                    instance,
+                    Violation(rule="resume.invoke_error", expected="a valid /resume response", actual=str(exc)),
+                    span,
+                )
+                return
+
+            self._settle(run_id, agent_id, entry, instance, response, span)
 
     def _finish_killed(self, run_id, agent_id, instance, violation: Violation | None, span, *, reason: str | None = None) -> None:
         kill_instance(
