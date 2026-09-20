@@ -8,6 +8,12 @@ Both return the same small Pydantic objects, so the graph doesn't care
 which one is plugged in. NOTE: the proposal models below deliberately have
 NO numeric limits. The limits live on the tool schemas in tools.py -- that
 is what rosterd ingests and the kernel enforces.
+
+LLMBrain picks a provider by whichever key is actually set, checked in this
+order: `GROK_API_KEY` / `XAI_API_KEY` (xAI's Grok, via `langchain-xai`),
+then `ANTHROPIC_API_KEY` (Claude, the original default). Neither package is
+imported until a call is actually made, so scripted mode needs neither
+installed nor any key set.
 """
 
 import logging
@@ -116,24 +122,46 @@ SYSTEM_REFUND = (
 StructuredCall = Callable[[type[BaseModel], str, str], BaseModel]
 
 
+def _grok_key() -> str | None:
+    return os.getenv("GROK_API_KEY") or os.getenv("XAI_API_KEY")
+
+
 @lru_cache(maxsize=1)
-def _model():
+def _grok_model():
+    from langchain_xai import ChatXAI  # lazy: scripted mode needs no key/package
+
+    return ChatXAI(
+        model=os.getenv("DEMO_LLM_MODEL", "grok-4-fast"),
+        api_key=_grok_key(),
+        max_tokens=512,
+    )
+
+
+@lru_cache(maxsize=1)
+def _anthropic_model():
     from langchain_anthropic import ChatAnthropic  # lazy: scripted mode needs no key/package
 
     return ChatAnthropic(model=os.getenv("DEMO_LLM_MODEL", "claude-haiku-4-5-20251001"), max_tokens=512)
 
 
-def _anthropic_structured_call(schema: type[BaseModel], system: str, user: str) -> BaseModel:
-    if not os.getenv("ANTHROPIC_API_KEY"):
-        raise RuntimeError("ANTHROPIC_API_KEY not set")
-    return _model().with_structured_output(schema).invoke([("system", system), ("human", user)])
+def _llm_structured_call(schema: type[BaseModel], system: str, user: str) -> BaseModel:
+    """Provider picked by whichever key is set -- see the module docstring.
+    `DEMO_LLM_MODEL` (if set) is passed to whichever provider gets picked,
+    so set it to a model name that actually belongs to that provider."""
+    if _grok_key():
+        model = _grok_model()
+    elif os.getenv("ANTHROPIC_API_KEY"):
+        model = _anthropic_model()
+    else:
+        raise RuntimeError("no LLM API key set (GROK_API_KEY / XAI_API_KEY / ANTHROPIC_API_KEY)")
+    return model.with_structured_output(schema).invoke([("system", system), ("human", user)])
 
 
 class LLMBrain:
     name = "llm"
 
     def __init__(self, structured_call: StructuredCall | None = None, fallback: ScriptedBrain | None = None):
-        self._call = structured_call or _anthropic_structured_call
+        self._call = structured_call or _llm_structured_call
         self._fallback = fallback or ScriptedBrain()
 
     def _ask(self, schema, system, text, fallback_fn):
@@ -165,3 +193,9 @@ def current_mode(override: str | None = None) -> str:
 
 def get_brain(override: str | None = None):
     return _LLM if current_mode(override) == "llm" else _SCRIPTED
+
+
+def llm_key_present() -> bool:
+    """True if any provider `_llm_structured_call` would actually use has a
+    key set -- same check, same order, exposed for `GET /health`."""
+    return bool(_grok_key() or os.getenv("ANTHROPIC_API_KEY"))

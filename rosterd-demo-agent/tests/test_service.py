@@ -108,6 +108,12 @@ def test_llm_mode_falls_back_when_call_fails():
 
 
 def test_llm_mode_end_to_end_without_key_still_works():
+    # Pop every provider key _llm_structured_call checks, not just
+    # Anthropic's -- otherwise this test silently stops exercising the
+    # no-key fallback path the moment GROK_API_KEY/XAI_API_KEY is set in
+    # whatever environment runs it.
+    os.environ.pop("GROK_API_KEY", None)
+    os.environ.pop("XAI_API_KEY", None)
     os.environ.pop("ANTHROPIC_API_KEY", None)
     body = {**scenarios.MISDIRECTION, "input": {**scenarios.MISDIRECTION["input"],
             "context": {"order_class": "standard", "mode": "llm"}}}

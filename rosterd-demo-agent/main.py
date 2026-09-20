@@ -1,7 +1,6 @@
 """FastAPI service. Endpoints required by the contract: POST /invoke, GET /graph.
 Additive extras (don't affect the contract): GET /health, POST /resume."""
 
-import os
 import uuid
 
 from fastapi import FastAPI, HTTPException
@@ -9,7 +8,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.types import Command
 from pydantic import BaseModel
 
-from brain import current_mode
+from brain import current_mode, llm_key_present
 from demo_agent import GraphResponse, InvokeRequest, InvokeResponse, ToolCall
 from graph import build_graph, extract_graph_spec
 
@@ -70,4 +69,4 @@ def resume(req: ResumeRequest) -> InvokeResponse:
 
 @app.get("/health")
 def health() -> dict:
-    return {"status": "ok", "mode": current_mode(), "llm_key_present": bool(os.getenv("ANTHROPIC_API_KEY"))}
+    return {"status": "ok", "mode": current_mode(), "llm_key_present": llm_key_present()}
