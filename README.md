@@ -1,2 +1,2 @@
 # rosterd
-Rosterd - Orchestration platform for agentic system
+Rosterd - Agentic Orchestrator for agentic system
