@@ -32,10 +32,42 @@ FLASH_SALE_BURST = {  # send many of these at once to make the fulfillment pool 
     "input": {"text": "Reserve 5 units of SKU-SNEAKER-9"},
 }
 
+CATALOG_CHECK = {  # send many of these at once for the catalog pool to scale
+    "entry_node": "catalog",
+    "input": {"text": "Is SKU-SNEAKER-9 in stock?"},
+}
+
+PAYMENT_CHARGE = {  # send many of these at once for the payment pool to scale
+    "entry_node": "payment",
+    "input": {"text": "Charge $89 on ORD-5001"},
+}
+
+PAYMENT_OVER_CAP = {  # kernel catches this one: exceeds ChargePaymentArgs.amount<=2000
+    "entry_node": "payment",
+    "input": {"text": "Charge $5000 on ORD-5002 for the bulk pallet order"},
+}
+
+# Black Friday: order intake, catalog lookups, and payment charges all
+# spiking together, not just one agent -- fire all three bursts at once
+# (see rosterd-kernel/scripts/black_friday_load.py, which drives this
+# through the KERNEL's /agents/{id}/simulate-load, not this service
+# directly, so the autoscaling response is real) to drive genuinely
+# concurrent load across separate pools simultaneously, the scenario a
+# single flash-sale burst against one agent can't demonstrate on its own.
+BLACK_FRIDAY_BURSTS = {
+    "order_intake": STANDARD_ORDER,
+    "catalog": CATALOG_CHECK,
+    "fulfillment": FLASH_SALE_BURST,
+    "payment": PAYMENT_CHARGE,
+}
+
 ALL = {
     "misdirection": MISDIRECTION,
     "normal_refund": NORMAL_REFUND,
     "standard_order": STANDARD_ORDER,
     "fraud_order": FRAUD_ORDER,
     "flash_sale": FLASH_SALE_BURST,
+    "catalog_check": CATALOG_CHECK,
+    "payment_charge": PAYMENT_CHARGE,
+    "payment_over_cap": PAYMENT_OVER_CAP,
 }

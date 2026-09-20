@@ -99,11 +99,18 @@ class Settings:
     #: three settings are what IngestionPollManifestSource.fetch() applies
     #: uniformly to every entry from a real ingestion poll, standing in for
     #: a per-agent scaling policy until ingestion can actually express one.
+    #: Raised to double digits for the Black Friday / peak-load scenario
+    #: (order_intake, catalog, fulfillment, and payment all spiking at
+    #: once, not just one agent) -- verified live, same method as the
+    #: original 1->5 fix: fire real concurrent load through
+    #: /agents/{id}/simulate-load across multiple agents simultaneously and
+    #: watch current_replicas actually climb into double digits in
+    #: SpacetimeDB's agent_metrics, not just past the old ceiling of 5.
     default_min_replicas: int = field(
         default_factory=lambda: _env_int("ROSTERD_KERNEL_DEFAULT_MIN_REPLICAS", 1)
     )
     default_max_replicas: int = field(
-        default_factory=lambda: _env_int("ROSTERD_KERNEL_DEFAULT_MAX_REPLICAS", 5)
+        default_factory=lambda: _env_int("ROSTERD_KERNEL_DEFAULT_MAX_REPLICAS", 20)
     )
     default_target_concurrency: int = field(
         default_factory=lambda: _env_int("ROSTERD_KERNEL_DEFAULT_TARGET_CONCURRENCY", 2)

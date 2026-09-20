@@ -114,8 +114,9 @@ class TestAgentManifestEntryValidator:
         assert entry.constraints[0].confidence == "high"
 
     def test_default_map_recognizes_exactly_the_keys_rosterd_demo_agent_declares(self):
-        """rosterd-demo-agent/constraints.yaml declares two legacy-shaped
+        """rosterd-demo-agent/constraints.yaml declares three legacy-shaped
         constraint keys (max_refund_usd on refund_exception, max_qty on
-        fulfillment) -- both need a field mapping or the kernel silently
-        stops enforcing them, as max_qty did until this was added."""
-        assert set(DEFAULT_LEGACY_CONSTRAINT_MAP) == {"max_refund_usd", "max_qty"}
+        fulfillment, max_charge_usd on payment) -- each needs a field
+        mapping or the kernel silently stops enforcing it, as max_qty did
+        until this was added."""
+        assert set(DEFAULT_LEGACY_CONSTRAINT_MAP) == {"max_refund_usd", "max_qty", "max_charge_usd"}

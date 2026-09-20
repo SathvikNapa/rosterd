@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 import brain
 import scenarios
 from main import app
-from tools import IssueRefundArgs, ReserveInventoryArgs
+from tools import ChargePaymentArgs, IssueRefundArgs, ReserveInventoryArgs
 
 client = TestClient(app)
 
@@ -23,11 +23,12 @@ def invoke(body):
 def test_tool_schema_limits_are_literal_and_readable():
     assert ReserveInventoryArgs.model_json_schema()["properties"]["qty"]["maximum"] == 50
     assert IssueRefundArgs.model_json_schema()["properties"]["amount"]["maximum"] == 100
+    assert ChargePaymentArgs.model_json_schema()["properties"]["amount"]["maximum"] == 2000
 
 
 def test_graph_endpoint():
     g = client.get("/graph").json()
-    assert set(g["nodes"]) == {"order_intake", "fulfillment", "refund_exception"}
+    assert set(g["nodes"]) == {"order_intake", "fulfillment", "refund_exception", "catalog", "payment"}
     edges = {(e["source"], e["target"], e["condition"]) for e in g["edges"]}
     assert ("order_intake", "fulfillment", "not_flagged") in edges
     assert ("order_intake", "refund_exception", "fraud_flagged") in edges
@@ -86,6 +87,42 @@ def test_soft_policy_caps_when_no_override():
     body = {"entry_node": "refund_exception",
             "input": {"text": "Please refund $250 on ORD-9", "context": {"order_class": "standard"}}}
     assert invoke(body)["tool_calls"][0]["args"]["amount"] == 100.0
+
+
+# ---- catalog + payment (added for the Black Friday / peak-load scenario) -
+def test_catalog_checks_stock_directly_no_approval_needed():
+    out = invoke(scenarios.CATALOG_CHECK)
+    assert out["tool_calls"][0]["tool"] == "check_stock"
+    assert out["tool_calls"][0]["args"] == {"sku": "SKU-SNEAKER-9"}
+    assert not out["tool_calls"][0]["result"].startswith("REJECTED")
+
+
+def test_payment_charges_within_cap():
+    out = invoke(scenarios.PAYMENT_CHARGE)
+    assert out["tool_calls"][0]["tool"] == "charge_payment"
+    assert out["tool_calls"][0]["args"] == {"order_id": "ORD-5001", "amount": 89.0}
+    assert not out["tool_calls"][0]["result"].startswith("REJECTED")
+
+
+def test_payment_over_cap_is_recorded_intact_and_rejected_by_schema():
+    """Same pattern as test_misdirection_args_are_intact_and_exceed_schema_limit:
+    the agent's own proposed amount is recorded as-is, never clamped, so the
+    kernel can evaluate its inferred rule against exactly what was attempted."""
+    out = invoke(scenarios.PAYMENT_OVER_CAP)
+    call = out["tool_calls"][0]
+    assert call["tool"] == "charge_payment"
+    assert call["args"]["amount"] == 5000.0
+    assert call["args"]["amount"] > ChargePaymentArgs.model_json_schema()["properties"]["amount"]["maximum"]
+    assert call["result"].startswith("REJECTED")
+
+
+def test_catalog_and_payment_are_directly_dispatchable_like_the_original_three():
+    for entry_node in ("order_intake", "fulfillment", "refund_exception", "catalog", "payment"):
+        r = client.post(
+            "/invoke",
+            json={"entry_node": entry_node, "input": {"text": "Reserve 1 unit of SKU-DEMO"}},
+        )
+        assert r.status_code == 200, (entry_node, r.text)
 
 
 # ---- LLM mode -------------------------------------------------------------

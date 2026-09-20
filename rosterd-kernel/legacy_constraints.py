@@ -81,6 +81,12 @@ DEFAULT_LEGACY_CONSTRAINT_MAP: dict[str, LegacyMapping] = {
     # dispatch (fulfillment_node has no interrupt() gate), so it's the
     # constraint a real demo can actually trigger end to end.
     "max_qty": LegacyMapping(field="tool_calls[*].args.qty", op="lte"),
+    # rosterd-demo-agent's constraints.yaml declares this on `payment`
+    # (mirrors tools.ChargePaymentArgs.amount = Field(le=2000)), added
+    # alongside the catalog/payment agents for the Black Friday / peak-load
+    # scenario. payment_node has no interrupt() gate (same as fulfillment),
+    # so this is reachable through a live, un-interrupted dispatch too.
+    "max_charge_usd": LegacyMapping(field="tool_calls[*].args.amount", op="lte"),
 }
 
 #: Keys that are known to NOT be per-response constraints (see module

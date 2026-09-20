@@ -13,6 +13,8 @@ class EntryNode(str, Enum):
     order_intake = "order_intake"
     fulfillment = "fulfillment"
     refund_exception = "refund_exception"
+    catalog = "catalog"
+    payment = "payment"
 
 
 class InvokeInput(BaseModel):

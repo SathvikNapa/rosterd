@@ -49,3 +49,15 @@ constraints:
     entry_only_via: [order_intake]   # the fraud_flagged edge; __start__->refund_exception also
                                       # exists for direct kernel/coordinator dispatch (see graph.py)
     max_refund_usd: 100        # mirrors tools.IssueRefundArgs.amount = Field(le=100)
+
+  # Added for the Black Friday / peak-load scenario: catalog and payment,
+  # directly-dispatchable and additive, same as the three above -- neither
+  # sits on order_intake's own routing (see graph.py).
+  catalog:
+    purpose: Read-only stock lookup for a SKU
+    direct_assignable: true   # no interrupt() -- a read never needs approval
+
+  payment:
+    purpose: Charges payment for an order
+    direct_assignable: true
+    max_charge_usd: 2000       # mirrors tools.ChargePaymentArgs.amount = Field(le=2000)
