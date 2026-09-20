@@ -19,15 +19,45 @@ import type { ManifestResponse } from '../lib/types';
 
 /**
  * The shape constraints_loader.py actually accepts: a `constraints` mapping
- * keyed by GRAPH NODE NAME. An empty mapping is legal ("discover the graph,
- * constrain nothing"); an unrecognised top-level key is not — it is read as a
- * node name and rejected with `constraints_unknown_nodes`.
+ * keyed by GRAPH NODE NAME. An empty mapping is legal syntactically, but NOT
+ * a safe default: `direct_assignable` is never inferred from the code, only
+ * ever read from this YAML (rosterd-kernel/manifest.py:
+ * `direct_assignable = bool(block.direct_assignable) if ... else False` --
+ * there is no AST-based fallback, despite `refund_node.py`'s own docstring
+ * describing interrupt() as "the signal ingestion reads"). An empty mapping
+ * submitted through this screen means every agent comes back
+ * direct_assignable: false, entry_only_via: [] -- unreachable, and Ask has
+ * nothing to propose against. Confirmed live: reproduced the exact bug
+ * report ("No agent in this manifest is directly assignable") by ingesting
+ * with `constraints: {}` against the real repo below.
+ *
+ * So the default here is the real constraints.yaml for
+ * https://github.com/SathvikNapa/rosterd-example (this screen's own default
+ * repo URL) -- verified against the live service to produce
+ * order_intake/fulfillment: direct_assignable true,
+ * refund_exception: direct_assignable false + entry_only_via [order_intake].
+ * Point this screen at a different repo and this YAML needs updating too;
+ * it isn't inferred from the URL.
  */
 const DEFAULT_CONSTRAINTS_YAML = `# constraints.yaml — merged over what static analysis infers.
 # Keys under \`constraints\` must be node names from the graph.
-# Leave empty to let discovery stand on its own.
+# direct_assignable is NOT inferred from the code -- set it explicitly per
+# node or nothing here will be dispatchable. This is rosterd-example's real
+# constraints.yaml (https://github.com/SathvikNapa/rosterd-example).
 version: 1
-constraints: {}
+constraints:
+  order_intake:
+    purpose: Classifies an incoming order as standard, high-value, or fraud-flagged
+    direct_assignable: true
+  fulfillment:
+    purpose: Reserves inventory for a standard/high-value order
+    direct_assignable: true
+    max_qty: 50
+  refund_exception:
+    purpose: Issues refunds; calls interrupt() for fraud-flagged/high-value orders
+    direct_assignable: false
+    entry_only_via: [order_intake]
+    max_refund_usd: 100
 `;
 
 export function Ingest() {
