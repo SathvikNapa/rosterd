@@ -176,7 +176,7 @@ class TestProvenance:
         url, _ = demo
         created = ingest(client, url, "constraints:\n  refund_node:\n    direct_assignable: true\n").json()
         provenance = client.get(f"/manifest/{created['manifest_id']}/provenance").json()
-        assert any("no constraints block" in w for w in provenance["warnings"])
+        assert any("direct_assignable not set in constraints.yaml" in w for w in provenance["warnings"])
 
 
 def test_healthz_reports_effective_settings(client):

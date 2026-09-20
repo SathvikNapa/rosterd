@@ -1,9 +1,16 @@
 """Static tool attribution — the half of discovery that get_graph() cannot do."""
 from __future__ import annotations
 
+import ast
 from pathlib import Path
 
-from astscan import scan_repo, tools_for_source, tools_used_by_function
+from astscan import calls_interrupt, scan_repo, tools_for_source, tools_used_by_function
+
+
+def _func(source: str) -> ast.FunctionDef:
+    """First function def in `source`, for calls_interrupt tests."""
+    tree = ast.parse(source)
+    return next(n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)))
 
 
 def write(tmp_path: Path, **files: str) -> Path:
@@ -249,3 +256,39 @@ class TestRealWorldPatterns:
         )
         scan = scan_repo(root)
         assert tools_used_by_function(scan.functions["call_model"], scan.tool_names, scan) == ["search"]
+
+
+class TestCallsInterrupt:
+    def test_bare_interrupt_call_is_detected(self):
+        func = _func(
+            "def refund_exception_node(state):\n"
+            "    decision = interrupt({'reason': 'needs a human'})\n"
+            "    return decision\n"
+        )
+        assert calls_interrupt(func) is True
+
+    def test_qualified_interrupt_call_is_detected(self):
+        func = _func(
+            "def refund_exception_node(state):\n"
+            "    decision = types.interrupt({'reason': 'needs a human'})\n"
+            "    return decision\n"
+        )
+        assert calls_interrupt(func) is True
+
+    def test_a_function_with_no_interrupt_call_is_not_flagged(self):
+        func = _func(
+            "def fulfillment_node(state):\n"
+            "    return attempt_tool(reserve_inventory, {'sku': 'x', 'qty': 1})\n"
+        )
+        assert calls_interrupt(func) is False
+
+    def test_an_unrelated_function_literally_named_interrupt_is_a_known_limitation(self):
+        """Matched by bare call name, not a resolved import -- see calls_interrupt's
+        own docstring. This test documents the tradeoff, it doesn't defend against it:
+        a human still confirms the result on Review before it governs anything."""
+        func = _func(
+            "def some_node(state):\n"
+            "    interrupt(state)  # a local helper, nothing to do with langgraph\n"
+            "    return state\n"
+        )
+        assert calls_interrupt(func) is True

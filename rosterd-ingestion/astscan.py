@@ -301,3 +301,25 @@ def tools_for_source(source: str, tool_names: set[str], scan: RepoScan | None = 
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             return tools_used_by_function(node, tool_names, scan)
     return []
+
+
+def calls_interrupt(func: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    """Does this function body call something literally named `interrupt`?
+
+    LangGraph's human-in-the-loop primitive is `langgraph.types.interrupt`,
+    almost always imported bare (`from langgraph.types import interrupt`) and
+    called directly -- `interrupt({...})` -- occasionally qualified
+    (`types.interrupt(...)`). Matched the same way `tools_used_by_function`
+    matches a tool reference: by bare name or by attribute name, not by
+    resolving the import. A false positive would need an unrelated function
+    named exactly `interrupt` in the node's call graph, which is exactly the
+    kind of edge case a human reviewing Review's discovered contract before
+    confirming it is there to catch -- this is a starting point for that
+    review, not a silent authority (see manifest.py's own "constraints win"
+    rule: any explicit `direct_assignable` in constraints.yaml overrides
+    this outright).
+    """
+    for node in ast.walk(func):
+        if isinstance(node, ast.Call) and _call_name(node.func) == "interrupt":
+            return True
+    return False

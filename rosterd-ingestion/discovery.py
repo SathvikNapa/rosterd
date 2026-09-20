@@ -51,6 +51,10 @@ class DiscoveredNode:
     tools: list[str] = field(default_factory=list)
     kind: str = "unknown"
     warnings: list[str] = field(default_factory=list)
+    #: True if this node's function body calls something named `interrupt`
+    #: (see astscan.calls_interrupt). manifest.py reads this to infer
+    #: direct_assignable when constraints.yaml doesn't say so explicitly.
+    has_interrupt: bool = False
 
 
 @dataclass
@@ -222,6 +226,17 @@ def _static_tools(scan: astscan.RepoScan, node_name: str) -> list[str]:
     return astscan.tools_used_by_function(func, scan.tool_names, scan)
 
 
+def _static_has_interrupt(scan: astscan.RepoScan, node_name: str) -> bool:
+    """Does this node's function body call `interrupt(...)`? Same node-to-
+    function resolution as `_static_tools`; an inline ToolNode has no
+    function body of its own to check, so it's never interrupt-gated."""
+    func_name = scan.node_to_function.get(node_name, node_name)
+    func = scan.functions.get(func_name)
+    if func is None:
+        return False
+    return astscan.calls_interrupt(func)
+
+
 def discover(repo: Path, settings: Settings) -> DiscoveryResult:
     """Discover the graph, its nodes, and each node's tools."""
     repo = repo.resolve()
@@ -254,6 +269,7 @@ def discover(repo: Path, settings: Settings) -> DiscoveryResult:
         runtime_tools = list(info.get("tools") or [])
         static_tools = _static_tools(scan, name)
         node.tools = sorted(dict.fromkeys(runtime_tools + static_tools))
+        node.has_interrupt = _static_has_interrupt(scan, name)
         nodes[name] = node
 
     edges: list[GraphEdge] = []
@@ -298,6 +314,7 @@ def _discover_static(repo: Path, scan: astscan.RepoScan, warnings: list[str]) ->
             if func is not None:
                 node.purpose = (ast.get_docstring(func) or "").strip().split("\n")[0]
             node.tools = _static_tools(scan, name)
+            node.has_interrupt = _static_has_interrupt(scan, name)
         nodes[name] = node
 
     seen: set[tuple[str, str]] = set()

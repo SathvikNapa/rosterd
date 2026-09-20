@@ -70,12 +70,16 @@ def test_declared_tools_replace_discovered_tools(settings):
     assert any("wire_transfer" in w for w in built.warnings)
 
 
-def test_unlisted_agents_fail_closed(settings):
-    """Silence in constraints.yaml must not grant assignability."""
+def test_unlisted_agents_infer_direct_assignable_from_interrupt(settings):
+    """Silence in constraints.yaml no longer means direct_assignable: false
+    outright (manifest.py's docstring covers the tradeoff and why it changed)
+    -- it's inferred from whether the node's own function body calls
+    interrupt(). The bundled demo-agent fixture's triage_node has no
+    interrupt() call anywhere, so it infers assignable."""
     built = build(settings, "constraints:\n  refund_node:\n    direct_assignable: true\n")
     triage = next(a for a in built.agents if a.node == "triage_node")
-    assert triage.direct_assignable is False
-    assert any("no constraints block" in w for w in built.warnings)
+    assert triage.direct_assignable is True
+    assert any("direct_assignable not set in constraints.yaml" in w for w in built.warnings)
 
 
 def test_unknown_constraint_keys_survive_into_the_manifest(settings):
@@ -90,3 +94,61 @@ def test_one_entry_per_agent_node_and_no_sentinels(settings):
     assert len(built.agents) == 3
     assert all(a.node not in discovery.SENTINELS for a in built.agents)
     assert built.graph.nodes[0] == "__start__"
+
+
+def test_direct_assignable_and_entry_only_via_infer_from_interrupt_and_edges(settings, make_repo):
+    """No constraints.yaml at all for either node -- both direct_assignable
+    and entry_only_via come entirely from inference. gated_node calls
+    interrupt(); intake_node's conditional edge into it is the only signal
+    for entry_only_via (see _infer_entry_only_via's docstring for why raw
+    __start__ reachability isn't used instead)."""
+    _, path = make_repo(
+        "interrupt-gated",
+        {
+            "agent.py": (
+                "from typing import TypedDict\n"
+                "from langgraph.graph import END, START, StateGraph\n"
+                "from langgraph.types import interrupt\n"
+                "\n"
+                "class S(TypedDict, total=False):\n"
+                "    text: str\n"
+                "\n"
+                "def intake_node(state: S) -> S:\n"
+                "    return state\n"
+                "\n"
+                "def route(state: S) -> str:\n"
+                "    return 'gated_node' if state.get('text') == 'flagged' else 'fast_node'\n"
+                "\n"
+                "def gated_node(state: S) -> S:\n"
+                "    interrupt({'reason': 'needs a human'})\n"
+                "    return state\n"
+                "\n"
+                "def fast_node(state: S) -> S:\n"
+                "    return state\n"
+                "\n"
+                "builder = StateGraph(S)\n"
+                "builder.add_node('intake_node', intake_node)\n"
+                "builder.add_node('gated_node', gated_node)\n"
+                "builder.add_node('fast_node', fast_node)\n"
+                "builder.add_edge(START, 'intake_node')\n"
+                "builder.add_conditional_edges('intake_node', route, "
+                "{'gated_node': 'gated_node', 'fast_node': 'fast_node'})\n"
+                "builder.add_edge('gated_node', END)\n"
+                "builder.add_edge('fast_node', END)\n"
+                "graph = builder.compile()\n"
+            ),
+        },
+    )
+    discovered = discovery.discover(path, settings)
+    built = build_manifest(discovered, parse_constraints("version: 1\nconstraints: {}\n"))
+    by_node = {a.node: a for a in built.agents}
+
+    assert by_node["gated_node"].direct_assignable is False
+    assert by_node["gated_node"].entry_only_via == ["intake_node"]
+    assert by_node["fast_node"].direct_assignable is True
+    assert by_node["fast_node"].entry_only_via == []
+    assert any(
+        "gated_node: direct_assignable not set in constraints.yaml -- inferred False "
+        "(interrupt() found)" in w
+        for w in built.warnings
+    )
