@@ -46,6 +46,7 @@ networks:
 volumes:
   spacetimedb-data:
   spacetimedb-publish-config:
+  jaeger-data:
 
 services:
   otel-collector:
@@ -61,8 +62,29 @@ services:
 
   jaeger:
     image: jaegertracing/all-in-one:1.62.0
+    # Default storage is in-memory -- every container restart silently
+    # wipes trace history, which means any "View trace" link handed out
+    # before a restart 404s forever afterward (hit this for real: a link
+    # shared mid-session broke the moment the stack got recreated for an
+    # unrelated fix). Badger persists it to the mounted volume instead, so
+    # trace history survives `docker compose restart` / `down` + `up`
+    # (not `down -v`).
+    #
+    # The image runs as uid 10001 with no /badger baked in, so a fresh
+    # named volume (root-owned by default) can't be written to by it --
+    # confirmed by watching it fail with "mkdir /badger/key: permission
+    # denied". Unlike the spacetimedb service, there's no already-owned
+    # directory in this image to mount over instead, so it just runs as
+    # root here; this is a local dev/demo box, not a hardened deployment.
+    user: root
     environment:
       COLLECTOR_OTLP_ENABLED: "true"
+      SPAN_STORAGE_TYPE: badger
+      BADGER_EPHEMERAL: "false"
+      BADGER_DIRECTORY_VALUE: /badger/data
+      BADGER_DIRECTORY_KEY: /badger/key
+    volumes:
+      - jaeger-data:/badger
     ports:
       - "16686:16686" # UI
     networks: [rosterd-backend]
