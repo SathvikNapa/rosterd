@@ -1,5 +1,72 @@
 # rosterd — Param: build the frontend (Joy's Person 3 spec, backend now real)
 
+## Status update — you're released to focus on UI polish
+
+The 8-screen frontend is built and working against the real, live backend
+— this doc's original job (bootstrap it from a spec) is done. `main` is
+current, clean, and everything below reflects it. Go ahead and focus on
+making it look better; the backend work below is FYI, not a blocker.
+
+**What changed since you last synced against this doc**, newest first:
+
+- **Ingest screen bug, fixed.** The constraints-YAML textarea defaulted
+  to rosterd-example's own node names (`fulfillment`, `refund_exception`)
+  and never updated when the repo URL changed — pointing Ingest at a
+  different real repo without hand-clearing that box failed with
+  `constraints_unknown_nodes`. Fixed in `src/screens/Ingest.tsx`: the
+  default now tracks the repo URL (rosterd-example's real numbers only
+  for that one repo, a generic valid `constraints: {}` for anything
+  else), and stops auto-syncing the moment you type into the box
+  yourself. If you're touching this screen, the new
+  `defaultConstraintsFor()`/`constraintsEdited` pattern there is probably
+  worth keeping as-is rather than re-deriving.
+- **Ingestion now works against arbitrary real public repos**, not just
+  the three pre-baked ones — a fresh sandboxed venv installs a target
+  repo's own dependencies when the fast path fails on a missing one (see
+  `rosterd-ingestion/sandbox.py`). Verified live against
+  `langchain-ai/react-agent` and others. Useful if you want a second,
+  visually-different repo to point the Ingest screen at while polishing
+  it, instead of only ever demoing against rosterd-example.
+- **Two new agents: `catalog` and `payment`**, added to the real
+  demo-agent graph (and its public mirror) for a "Black Friday peak load"
+  scenario. The confirmed manifest is now **5 agents, not 3** —
+  `order_intake`, `fulfillment`, `refund_exception`, `catalog`,
+  `payment`. Nothing in the frontend should hardcode a count of 3
+  anywhere (Roster's assignee picker, Federation's pod grid, etc.) — if
+  it does, that's now visibly wrong and worth fixing as part of the
+  polish pass.
+- **Scaling ceilings raised to double digits.** A confirmed manifest's
+  agents now default to `max_replicas: 20` (was 5, was silently 1 before
+  that fix — see `rosterd-kernel/README.md`'s "A load burst can finish
+  faster than the scaler samples it" if Monitor/Federation ever look
+  static during a load test: it's a real 5-second sampling-interval
+  gotcha, not a frontend bug). Worth knowing so Federation's pod-count
+  layout doesn't visually break once a real load test pushes a pool to
+  15-20 instances instead of 1-3.
+- **`paused` is a real `RunStatus`** now (a run interrupted for
+  human/reviewer approval — `POST /runs/{run_id}/resume` settles it,
+  either from a human or from the kernel's own background reviewer
+  agent). Already wired into `types.ts`/`format.ts`/`RunDetail.tsx` so a
+  paused run renders correctly (warn-colored, "Paused — awaiting
+  review"). **What's still missing, and is arguably the single highest-value
+  functional gap left in the UI, not just a visual one:** there is no
+  button anywhere to actually call `/resume` — `src/lib/api/kernel.ts`
+  has `killRun` but no `resumeRun`. Today a paused run only ever resolves
+  itself if the background reviewer agent happens to be enabled
+  (`GROK_API_KEY`/`ANTHROPIC_API_KEY` set on the kernel process); a human
+  reviewer has no way to act from the UI at all. Not asking you to build
+  this now — just flagging it since "make the UI look better" will
+  naturally have you in `RunDetail.tsx` anyway, and a real
+  Approve/Deny affordance on a paused run might be worth 20 minutes if
+  you're already in there.
+- **Kernel's simulated-instance mode renamed** `fake` → `simulated`
+  (`docker_mode` in `GET /healthz`/`GET /manifest`'s debug output) —
+  purely a naming fix (the agents were always real; only the
+  container/instance-pool bookkeeping was ever simulated). Doesn't
+  affect the frontend today (nothing in `src/` referenced the old name),
+  flagging only in case you add a status display that surfaces
+  `docker_mode` later.
+
 ## Why this doc exists
 
 `rosterd-joy-coordinator-frontend.md` specs three things: the coordinator

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # End-to-end sanity check against a running kernel: health, an unknown-agent
 # dispatch (expected 404), and a policy push. Does not require Docker or a
-# live demo-agent -- fake mode plus a manifest-not-ready 503 is a valid,
-# expected outcome when nothing has been wired up yet.
+# live demo-agent -- simulated mode plus a manifest-not-ready 503 is a
+# valid, expected outcome when nothing has been wired up yet.
 set -euo pipefail
 BASE="${1:-http://localhost:8100}"
 
