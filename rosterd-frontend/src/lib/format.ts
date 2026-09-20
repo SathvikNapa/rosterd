@@ -58,11 +58,16 @@ export interface Palette {
   fg: string;
 }
 
+/**
+ * `border` is a mark (a 2px ring) and may use the vivid step; `fg` is text
+ * sitting on `bg` and must use the darker step, or the glyph drops below
+ * 4.5:1 on the Tuscan surfaces. See the contrast note in tokens.css.
+ */
 const PALETTES: Record<Tone, Palette> = {
   neutral: { tone: 'neutral', bg: 'var(--surface-muted)', border: 'var(--border-neutral)', fg: 'var(--text-muted)' },
-  accent: { tone: 'accent', bg: 'var(--accent-soft)', border: 'var(--accent)', fg: 'var(--accent)' },
-  ok: { tone: 'ok', bg: 'var(--ok-soft)', border: 'var(--ok)', fg: 'var(--ok)' },
-  warn: { tone: 'warn', bg: 'var(--warn-soft)', border: 'var(--warn)', fg: 'var(--warn)' },
+  accent: { tone: 'accent', bg: 'var(--accent-soft)', border: 'var(--accent)', fg: 'var(--accent-dark)' },
+  ok: { tone: 'ok', bg: 'var(--ok-soft)', border: 'var(--ok)', fg: 'var(--ok-dark)' },
+  warn: { tone: 'warn', bg: 'var(--warn-soft)', border: 'var(--warn)', fg: 'var(--warn-dark)' },
   danger: { tone: 'danger', bg: 'var(--danger-soft)', border: 'var(--danger)', fg: 'var(--danger)' },
 };
 

@@ -13,6 +13,7 @@
  */
 import { useMemo } from 'react';
 import { Badge, Banner, Empty, Label } from '../components/ui';
+import { Stagger, StaggerItem } from '../components/motion';
 import { config } from '../lib/config';
 import { relativeTime } from '../lib/format';
 import { useLive } from '../lib/live/LiveProvider';
@@ -43,16 +44,17 @@ export function Monitor() {
         </Banner>
       )}
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+      <Stagger style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
         {latest.map((row) => (
-          <MonitorCard
-            key={row.agent_id}
-            row={row}
-            name={agentDisplayName(tables.agents, row.agent_id)}
-            series={metricsSeries(tables.agent_metrics, config.siteId, row.agent_id)}
-          />
+          <StaggerItem key={row.agent_id}>
+            <MonitorCard
+              row={row}
+              name={agentDisplayName(tables.agents, row.agent_id)}
+              series={metricsSeries(tables.agent_metrics, config.siteId, row.agent_id)}
+            />
+          </StaggerItem>
         ))}
-      </div>
+      </Stagger>
     </main>
   );
 }
@@ -77,8 +79,8 @@ function MonitorCard({ row, name, series }: { row: AgentMetricsRow; name: string
 
       <div className="col" style={{ gap: 8 }}>
         <div className="row" style={{ gap: 18 }}>
-          <LegendSwatch color="var(--accent)" label="load (in flight + queued)" />
-          <LegendSwatch color="var(--warn)" label="replicas running" dashed />
+          <LegendSwatch color="var(--chart-load)" label="load (in flight + queued)" />
+          <LegendSwatch color="var(--chart-replicas)" label="replicas running" dashed />
         </div>
         <Sparkline series={series} />
       </div>
@@ -174,9 +176,9 @@ function Sparkline({ series }: { series: AgentMetricsRow[] }) {
       role="img"
       aria-label={`Load and replica count over the last ${series.length} scaler ticks`}
     >
-      <path d={areaPath} fill="var(--accent-soft)" />
-      <path d={loadPath} fill="none" stroke="var(--accent)" strokeWidth={2} />
-      <path d={replicaPath} fill="none" stroke="var(--warn)" strokeWidth={2} strokeDasharray="4 3" />
+      <path d={areaPath} fill="var(--chart-load-fill)" />
+      <path d={loadPath} fill="none" stroke="var(--chart-load)" strokeWidth={2} />
+      <path d={replicaPath} fill="none" stroke="var(--chart-replicas)" strokeWidth={2} strokeDasharray="4 3" />
     </svg>
   );
 }

@@ -14,6 +14,7 @@ import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AgentBubble } from '../components/AgentBubble';
 import { AgentCard } from '../components/AgentCard';
+import { Stagger } from '../components/motion';
 import { Badge, Banner, Criterion, Label } from '../components/ui';
 import { dispatch } from '../lib/api/kernel';
 import { describeError } from '../lib/api/http';
@@ -432,22 +433,24 @@ export function Roster() {
           Add an agent as an assignee. Pod counts come straight from the live <code>agents</code> table.
         </p>
 
-        {pools.map((pool) => (
-          <AgentCard
-            key={pool.agent_id}
-            name={pool.name}
-            tone={poolTone(pool.status, pool.replicas)}
-            statusLabel={poolStatusLabel(pool.status, pool.replicas)}
-            replicas={pool.replicas}
-            detail={
-              pool.replicas > 1
-                ? `${pool.replicas} instances running · ${pool.working} working`
-                : (manifest?.agents.find((agent) => agent.id === pool.agent_id)?.purpose ??
-                  `updated ${relativeTime(pool.updated_at)}`)
-            }
-            onClick={draft ? () => addAssignee(draft, pool.agent_id, patchDraft) : undefined}
-          />
-        ))}
+        <Stagger style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          {pools.map((pool) => (
+            <AgentCard
+              key={pool.agent_id}
+              name={pool.name}
+              tone={poolTone(pool.status, pool.replicas)}
+              statusLabel={poolStatusLabel(pool.status, pool.replicas)}
+              replicas={pool.replicas}
+              detail={
+                pool.replicas > 1
+                  ? `${pool.replicas} instances running · ${pool.working} working`
+                  : (manifest?.agents.find((agent) => agent.id === pool.agent_id)?.purpose ??
+                    `updated ${relativeTime(pool.updated_at)}`)
+              }
+              onClick={draft ? () => addAssignee(draft, pool.agent_id, patchDraft) : undefined}
+            />
+          ))}
+        </Stagger>
 
         {pools.length === 0 && (
           <div className="card">

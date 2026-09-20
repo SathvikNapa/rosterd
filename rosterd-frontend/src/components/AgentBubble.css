@@ -24,25 +24,7 @@
   line-height: 1.2;
 }
 
-/* The pod count changing is a demo beat — animate it, don't swap it. */
-.bubble__count--bump {
-  animation: bubble-bump 600ms cubic-bezier(0.22, 1.2, 0.36, 1);
-}
-
-@keyframes bubble-bump {
-  0% {
-    transform: scale(1);
-  }
-  35% {
-    transform: scale(1.5);
-  }
-  100% {
-    transform: scale(1);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .bubble__count--bump {
-    animation: none;
-  }
-}
+/* The pod-count pop lives in AgentBubble.tsx as a Motion spring now, so the
+   old @keyframes is gone. Reduced motion is handled there too, by swapping
+   the scale variants for fade-only ones — MotionConfig alone would stop the
+   scale animating but still render the badge at scale 0 for a frame. */

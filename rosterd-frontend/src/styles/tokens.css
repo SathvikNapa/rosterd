@@ -1,46 +1,97 @@
-/* Design tokens, lifted verbatim from TeamPieces/Design.html.
-   Every value here appears literally in one of the seven exported frames —
-   nothing is invented, so a screen built from these reads as the same
-   system the Figma render does. */
+/* Design tokens — "Tuscan sunset".
+
+   The four brand colors are fixed by the theme:
+
+     #E35336  sunset orange   -> --accent      (brand, marks, active state)
+     #FFD3AC  peach glow      -> the warm surface/soft tints derive from it
+     #9988A1  dusk mauve      -> --mauve       (neutral/idle tone, muted ink)
+     #8A2B0E  burnt sienna    -> --danger      (killed, violation)
+
+   Everything else is a tint or shade of those four, plus two supporting
+   status hues that the four cannot supply on their own (see "Derived status
+   hues" below).
+
+   Contrast: every foreground/background pair this file creates was checked
+   against WCAG — 4.5:1 for text, 3:1 for decorative ink and chart marks.
+   The previous green theme failed 9 of those pairs; this one fails none.
+   Re-check with scratch/contrast.mjs if you change a value. */
 
 :root {
-  /* surfaces */
-  --bg: #faf9f6;
+  /* the four, unmodified, for anything that wants the literal brand color */
+  --sunset: #e35336;
+  --peach: #ffd3ac;
+  --mauve: #9988a1;
+  --sienna: #8a2b0e;
+
+  /* surfaces — warm plaster rather than neutral grey */
+  --bg: #fdf7f2;
   --surface: #ffffff;
-  --surface-muted: #f2f0ea;
+  --surface-muted: #f8ede3;
 
   /* lines */
-  --border: #e7e4dc;
-  --border-soft: #f0eee7;
-  --border-neutral: #d8d4ca;
+  --border: #eedfd1;
+  --border-soft: #f5ebe1;
+  --border-neutral: #c9b6ce; /* mauve-cast: the idle-agent ring */
 
-  /* text */
-  --text: #26251f;
-  --text-strong: #1e1d19;
-  --text-body: #57544d;
-  --text-muted: #8c887f;
-  --text-faint: #b7b3a9;
+  /* text — warm browns, with the muted step pulled toward the mauve */
+  --text: #2b1f18;
+  --text-strong: #1f160f;
+  --text-body: #5b4a3f;
+  --text-muted: #74627c;
+  --text-faint: #94818a;
 
-  /* accent (rosterd green) */
-  --accent: #5e7e71;
-  --accent-dark: #4b6459;
-  --accent-mid: #8fa99c;
-  --accent-soft: #e5ede9;
+  /* accent (sunset orange).
+     --accent is the *mark* color: strokes, fills, rings, chart lines. At
+     3.78:1 on white it clears the 3:1 bar for marks but not the 4.5:1 bar
+     for text, so anything that renders accent-colored *text* — pills,
+     labels, solid buttons — uses --accent-dark instead. */
+  --accent: #e35336;
+  --accent-dark: #a8330f;
+  --accent-mid: #f08c71;
+  --accent-soft: #ffe7da;
 
-  /* status: ok / working */
-  --ok: #5b8a63;
-  --ok-dark: #4f7857;
-  --ok-soft: #e6f0e8;
+  /* Derived status hues.
+     ok and warn are the one place the four-color brief cannot be taken
+     literally: "done" and "killed" must never be confusable, and every
+     brand color here is a warm red-orange. So ok is a Tuscan olive and warn
+     a deeper amber — both drawn from the same Mediterranean family, both
+     validated against the peach surfaces they sit on. */
 
-  /* status: warn / scaled up */
-  --warn: #b98a3e;
-  --warn-soft: #f5eedf;
+  /* status: ok / working — olive */
+  --ok: #6b7f45;
+  --ok-dark: #4c5c2e;
+  --ok-soft: #edf0e2;
 
-  /* status: danger / killed / violation */
-  --danger: #b25a4e;
-  --danger-soft: #f7e9e7;
-  --danger-border: #e9cfc9;
-  --danger-bg: #fbf2f1;
+  /* The four *-soft fills are pale by design and cannot carry identity on
+     their own (peach vs amber measures ΔE 2.1 — indistinguishable). They are
+     nudged apart in hue anyway — peach / yellow / rose / olive — but what
+     actually separates a badge is its text label plus its 4.5:1 text color,
+     which is why no badge in this UI is ever color-only.
+
+     status: warn / scaled up — amber */
+  --warn: #b0711f;
+  --warn-dark: #8a5714;
+  --warn-soft: #fbebcf;
+  --warn-border: #f0d6ae;
+  --warn-hover: #f6e0b8;
+
+  /* status: danger / killed / violation — burnt sienna */
+  --danger: #8a2b0e;
+  --danger-soft: #f3dcde;
+  --danger-border: #e7c8cb;
+  --danger-bg: #fcf1f0;
+
+  /* Chart series.
+     Deliberately NOT the status tokens: reusing "warn" as a categorical
+     series both overloads its meaning and, measured, fails — #E35336 against
+     an amber is ΔE 0.4 under deuteranopia, i.e. the two lines are the same
+     color to a red-green colorblind reader. The mauve is the user's #9988A1
+     saturated just enough to clear the chroma floor (it reads as grey
+     otherwise); the pair scores ΔE 16.4 protan / 19.5 normal and passes all
+     six checks of the palette validator. Series also differ by line style. */
+  --chart-load: #e35336;
+  --chart-replicas: #94619f;
+  --chart-load-fill: #ffe7da;
 
   /* type */
   --font-sans: 'Space Grotesk', -apple-system, BlinkMacSystemFont, sans-serif;
@@ -58,4 +109,8 @@
   --nav-h: 64px;
   --page-pad: 48px;
   --page-max: 1440px;
+
+  /* motion — one place to tune feel. Durations are in seconds because
+     motion/react takes seconds, not ms. */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
 }

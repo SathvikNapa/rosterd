@@ -13,6 +13,7 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Badge, Banner, ConcurrencyDots, Empty, LoadBar, TraceLink } from '../components/ui';
+import { Stagger, StaggerItem } from '../components/motion';
 import { simulateLoad } from '../lib/api/kernel';
 import { describeError } from '../lib/api/http';
 import { config, isDemo } from '../lib/config';
@@ -93,9 +94,11 @@ export function Federation() {
       {error && <Banner tone="danger">{error}</Banner>}
       {note && <Banner tone="info">{note}</Banner>}
 
-      <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap' }}>
+      <Stagger style={{ display: 'flex', gap: 24, flexWrap: 'wrap' }}>
         {rollups.map((rollup) => (
-          <SiteCard key={rollup.site_id} rollup={rollup} />
+          <StaggerItem key={rollup.site_id} style={{ display: 'flex', flex: 1, minWidth: 280 }}>
+            <SiteCard rollup={rollup} />
+          </StaggerItem>
         ))}
         {rollups.length === 0 && (
           <div className="card card--xl" style={{ flex: 1 }}>
@@ -105,7 +108,7 @@ export function Federation() {
             </Empty>
           </div>
         )}
-      </div>
+      </Stagger>
 
       <div className="card card--xl row row--between" style={{ padding: '24px 28px', gap: 32, alignItems: 'flex-start' }}>
         <div>

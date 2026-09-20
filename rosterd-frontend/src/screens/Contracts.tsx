@@ -8,6 +8,7 @@
 import { useMemo } from 'react';
 import { AgentBubble } from '../components/AgentBubble';
 import { Badge, Banner, Empty } from '../components/ui';
+import { StaggerBody, StaggerTr } from '../components/motion';
 import { relativeTime, sourceBadge } from '../lib/format';
 import { useLive } from '../lib/live/LiveProvider';
 import { rulesForAgent, spendLimit } from '../lib/rules';
@@ -69,7 +70,7 @@ export function Contracts() {
               <th>Scaling</th>
             </tr>
           </thead>
-          <tbody>
+          <StaggerBody>
             {manifest.agents.map((agent) => {
               const kernelEntry = kernelById.get(agent.id);
               const pool = pools.find((item) => item.agent_id === agent.id);
@@ -79,7 +80,7 @@ export function Contracts() {
               const limit = spendLimit(agent);
 
               return (
-                <tr key={agent.id}>
+                <StaggerTr key={agent.id}>
                   <td>
                     <div className="row" style={{ gap: 12 }}>
                       <AgentBubble
@@ -112,7 +113,7 @@ export function Contracts() {
                     )}
                   </td>
                   <td style={{ fontSize: 13, color: 'var(--text-body)' }}>{scalingLabel(kernelEntry)}</td>
-                </tr>
+                </StaggerTr>
               );
             })}
             {manifest.agents.length === 0 && (
@@ -122,7 +123,7 @@ export function Contracts() {
                 </td>
               </tr>
             )}
-          </tbody>
+          </StaggerBody>
         </table>
       </div>
 

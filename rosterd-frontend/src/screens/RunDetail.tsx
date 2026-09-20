@@ -10,6 +10,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { AgentCard } from '../components/AgentCard';
+import { Stagger } from '../components/motion';
 import { Banner, Label, TraceId, TraceLink } from '../components/ui';
 import { getRun, killRun } from '../lib/api/kernel';
 import { describeError } from '../lib/api/http';
@@ -225,28 +226,30 @@ export function RunDetail() {
         <h3 className="label" style={{ fontSize: 13 }}>
           Team
         </h3>
-        {pools.map((pool) => {
-          const isRunAgent = pool.agent_id === run?.agent_id;
-          const tone = isRunAgent && run?.status === 'killed' ? 'danger' : poolTone(pool.status, pool.replicas);
-          return (
-            <AgentCard
-              key={pool.agent_id}
-              name={pool.name}
-              tone={tone}
-              replicas={pool.replicas}
-              statusLabel={
-                isRunAgent && run?.status === 'killed' ? 'Killed' : poolStatusLabel(pool.status, pool.replicas)
-              }
-              detail={
-                isRunAgent
-                  ? run?.status === 'killed'
-                    ? 'Terminated by kernel, awaiting reset'
-                    : `Running ${titleize(runId)}`
-                  : `updated ${relativeTime(pool.updated_at)}`
-              }
-            />
-          );
-        })}
+        <Stagger style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          {pools.map((pool) => {
+            const isRunAgent = pool.agent_id === run?.agent_id;
+            const tone = isRunAgent && run?.status === 'killed' ? 'danger' : poolTone(pool.status, pool.replicas);
+            return (
+              <AgentCard
+                key={pool.agent_id}
+                name={pool.name}
+                tone={tone}
+                replicas={pool.replicas}
+                statusLabel={
+                  isRunAgent && run?.status === 'killed' ? 'Killed' : poolStatusLabel(pool.status, pool.replicas)
+                }
+                detail={
+                  isRunAgent
+                    ? run?.status === 'killed'
+                      ? 'Terminated by kernel, awaiting reset'
+                      : `Running ${titleize(runId)}`
+                    : `updated ${relativeTime(pool.updated_at)}`
+                }
+              />
+            );
+          })}
+        </Stagger>
         {pools.length === 0 && (
           <div className="card">
             <div className="empty" style={{ padding: 16 }}>

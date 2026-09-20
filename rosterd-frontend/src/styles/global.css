@@ -18,10 +18,10 @@ body {
 }
 
 a {
-  color: var(--accent);
+  color: var(--accent-dark);
 }
 a:hover {
-  color: var(--accent-dark);
+  color: var(--sienna);
 }
 
 code,
@@ -86,6 +86,7 @@ button {
   gap: 6px;
 }
 .nav__link {
+  position: relative;
   color: var(--text-muted);
   padding: 8px 16px;
   border-radius: var(--r-sm);
@@ -97,11 +98,25 @@ button {
   color: var(--text-body);
   background: var(--surface-muted);
 }
+/* The active background is .nav__link-chip, a single shared element that
+   slides between links (layoutId in AppShell) — so the link itself must not
+   paint one, or two would be visible mid-transition. */
 .nav__link--active,
 .nav__link--active:hover {
-  background: var(--accent-soft);
+  background: transparent;
   color: var(--accent-dark);
   font-weight: 600;
+}
+.nav__link-chip {
+  position: absolute;
+  inset: 0;
+  border-radius: var(--r-sm);
+  background: var(--accent-soft);
+  z-index: 0;
+}
+.nav__link-label {
+  position: relative;
+  z-index: 1;
 }
 
 .nav__right {
@@ -116,6 +131,12 @@ button {
   background: var(--surface-muted);
   border: 1px solid var(--border);
   flex-shrink: 0;
+}
+
+.page-shell {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
 }
 
 .page {
@@ -216,7 +237,7 @@ button {
   padding: 0 20px;
   border-radius: 9px;
   border: none;
-  background: var(--accent);
+  background: var(--accent-dark);
   color: #fff;
   font-size: 14px;
   font-weight: 600;
@@ -228,7 +249,8 @@ button {
   white-space: nowrap;
 }
 .btn:hover:not(:disabled) {
-  background: var(--accent-dark);
+  /* deepens on hover; --accent itself is too light to carry white text */
+  background: var(--sienna);
 }
 .btn:disabled {
   opacity: 0.45;
@@ -251,10 +273,10 @@ button {
 .btn--warn {
   border: 1.5px solid var(--warn);
   background: var(--warn-soft);
-  color: var(--warn);
+  color: var(--warn-dark);
 }
 .btn--warn:hover:not(:disabled) {
-  background: #f0e4cd;
+  background: var(--warn-hover);
 }
 .btn--dashed {
   height: 36px;
@@ -294,7 +316,7 @@ button {
 }
 .pill--warn {
   background: var(--warn-soft);
-  color: var(--warn);
+  color: var(--warn-dark);
 }
 .pill--danger {
   background: var(--danger-soft);
@@ -361,7 +383,7 @@ button {
   align-items: center;
   justify-content: center;
   font-size: 10px;
-  color: var(--accent);
+  color: var(--accent-dark);
   flex-shrink: 0;
 }
 
@@ -432,8 +454,8 @@ button {
 }
 .banner--warn {
   background: var(--warn-soft);
-  color: var(--warn);
-  border: 1px solid #ecdcbd;
+  color: var(--warn-dark);
+  border: 1px solid var(--warn-border);
 }
 
 .empty {
@@ -452,5 +474,65 @@ button {
   }
   .nav__links {
     overflow-x: auto;
+  }
+}
+
+/* --------------------------------------------------------------- motion */
+/* Hover/press feedback stays in CSS: these are cheap state changes on
+   elements that are plain <button>/<a>, and routing them through Motion
+   would mean converting every call site for no visual gain. The Motion
+   layer handles the things CSS cannot — shared-element movement, presence,
+   and interruptible springs. Both honour prefers-reduced-motion. */
+
+.btn,
+.btn--ghost,
+.btn--warn,
+.btn--dashed {
+  transition:
+    background 160ms var(--ease-out),
+    color 160ms var(--ease-out),
+    border-color 160ms var(--ease-out),
+    transform 160ms var(--ease-out);
+}
+.btn:active:not(:disabled) {
+  transform: translateY(1px) scale(0.985);
+}
+
+.nav__link,
+.linkish,
+.trace-link,
+a {
+  transition:
+    color 160ms var(--ease-out),
+    background 160ms var(--ease-out);
+}
+
+.card {
+  transition:
+    border-color 200ms var(--ease-out),
+    box-shadow 200ms var(--ease-out);
+}
+
+.input,
+.textarea {
+  transition:
+    border-color 160ms var(--ease-out),
+    box-shadow 160ms var(--ease-out);
+}
+.input:focus,
+.textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
   }
 }

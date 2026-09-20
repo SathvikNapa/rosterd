@@ -8,6 +8,7 @@
  */
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { AnimatePresence, motion } from 'motion/react';
 import { AgentBubble } from '../components/AgentBubble';
 import { Badge, Banner, Criterion, Label } from '../components/ui';
 import { parseAsk } from '../lib/api/ingestion';
@@ -18,6 +19,7 @@ import { demoAsk } from '../lib/live/demo';
 import { priorityTone } from '../lib/format';
 import { useLive } from '../lib/live/LiveProvider';
 import { agentDisplayName } from '../lib/selectors';
+import { EASE_OUT } from '../lib/motion';
 import { useSession } from '../lib/session';
 import type { AskResponse, TaskRow, TaskSpec } from '../lib/types';
 
@@ -185,8 +187,17 @@ export function Ask() {
           </Banner>
         )}
 
-        {proposal && (
-          <div className="card card--xl" style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+        <AnimatePresence mode="wait">
+          {proposal && (
+            <motion.div
+              key={proposal.agent_id + proposal.task.title}
+              className="card card--xl"
+              style={{ display: 'flex', flexDirection: 'column', gap: 18 }}
+              initial={{ opacity: 0, y: 12, scale: 0.985 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: -8, scale: 0.99 }}
+              transition={{ duration: 0.3, ease: EASE_OUT }}
+            >
             <div className="row row--between">
               <Label>Proposed action</Label>
               <Badge tone={proposal.confidence === 'high' ? 'ok' : proposal.confidence === 'medium' ? 'warn' : 'danger'}>
@@ -244,9 +255,10 @@ export function Ask() {
               <button type="button" className="btn" onClick={doIt} disabled={dispatching || isDemo}>
                 {dispatching ? 'Dispatching…' : 'Do it'}
               </button>
-            </div>
-          </div>
-        )}
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
     </main>
   );

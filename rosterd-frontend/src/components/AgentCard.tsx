@@ -4,8 +4,10 @@
  * status color once an agent is doing something (the frames draw idle agents
  * with the plain 1px border and active ones with a 1.5px colored one).
  */
+import { motion } from 'motion/react';
 import type { ReactNode } from 'react';
 import { palette } from '../lib/format';
+import { SPRING, useStaggerItem } from '../lib/motion';
 import type { Tone } from '../lib/format';
 import { AgentBubble } from './AgentBubble';
 import { SmallBadge } from './ui';
@@ -22,6 +24,7 @@ interface Props {
 
 export function AgentCard({ name, tone, statusLabel, detail, replicas = 1, onClick, selected }: Props) {
   const colors = palette(tone);
+  const itemVariants = useStaggerItem();
   const active = tone !== 'neutral' || selected;
 
   const card = (
@@ -51,11 +54,21 @@ export function AgentCard({ name, tone, statusLabel, detail, replicas = 1, onCli
     color: 'inherit',
   };
 
-  if (!onClick) return <div style={style}>{card}</div>;
+  // `variants` only resolve when a <Stagger> is above this in the tree; on
+  // its own the card just renders, which is why no `initial` is set here.
+  if (!onClick) return <motion.div variants={itemVariants} style={style}>{card}</motion.div>;
 
   return (
-    <button type="button" style={{ ...style, cursor: 'pointer' }} onClick={onClick}>
+    <motion.button
+      type="button"
+      variants={itemVariants}
+      style={{ ...style, cursor: 'pointer' }}
+      onClick={onClick}
+      whileHover={{ y: -2, borderColor: colors.border }}
+      whileTap={{ scale: 0.985, y: 0 }}
+      transition={SPRING}
+    >
       {card}
-    </button>
+    </motion.button>
   );
 }

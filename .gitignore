@@ -267,3 +267,11 @@ coverage/
 # macOS
 .DS_Store
 .AppleDouble
+
+# The Python packaging block above ignores `lib/`, meaning build output at the
+# repo root. It also matches rosterd-frontend/src/lib/ — the frontend's own
+# source directory. The files already in there are tracked only because they
+# predate the rule; any NEW file under it was being silently dropped (hit this
+# adding src/lib/motion.ts: `git add` reported nothing and the build broke on
+# a fresh clone). Re-include the directory so that stops happening.
+!rosterd-frontend/src/lib/

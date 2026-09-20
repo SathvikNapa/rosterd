@@ -8,6 +8,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Badge, Banner, Empty } from '../components/ui';
+import { StaggerBody, StaggerTr } from '../components/motion';
 import { confirmManifest } from '../lib/api/ingestion';
 import { describeError } from '../lib/api/http';
 import { isDemo } from '../lib/config';
@@ -119,12 +120,12 @@ export function Review() {
               <th aria-label="Actions" />
             </tr>
           </thead>
-          <tbody>
+          <StaggerBody>
             {rules.map((rule) => {
               const badge = sourceBadge(rule.source);
               const isEditing = editing === rule.key;
               return (
-                <tr key={rule.key}>
+                <StaggerTr key={rule.key}>
                   <td style={{ fontWeight: 600 }} title={rule.agentId}>
                     {agentDisplayName(tables.agents, rule.agentId)}
                   </td>
@@ -175,7 +176,7 @@ export function Review() {
                       </span>
                     )}
                   </td>
-                </tr>
+                </StaggerTr>
               );
             })}
             {rules.length === 0 && (
@@ -185,7 +186,7 @@ export function Review() {
                 </td>
               </tr>
             )}
-          </tbody>
+          </StaggerBody>
         </table>
       </div>
 
