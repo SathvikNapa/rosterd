@@ -29,7 +29,13 @@ echo "==> generating TypeScript bindings from $module/spacetimedb"
   --out-dir "$here/src/module_bindings" \
   --module-path ./spacetimedb)
 
+# The generated code imports from "spacetimedb" directly (verified by
+# grepping src/module_bindings/index.ts's own `from` clause after a real
+# generate run) -- @clockworklabs/spacetimedb-sdk isn't the package it
+# needs and doesn't resolve (`npm install` fails on a peer dep, spacetimedb@next,
+# that package pulls in). Pinned to 2.10.* to match rosterd-spacetimedb's
+# server package.json and the locally installed CLI (spacetime --version).
 echo "==> installing the client SDK the generated code imports"
-(cd "$here" && npm install @clockworklabs/spacetimedb-sdk)
+(cd "$here" && npm install spacetimedb@2.10.1)
 
 echo "done. Restart the dev server; the nav pill should read 'Live'."

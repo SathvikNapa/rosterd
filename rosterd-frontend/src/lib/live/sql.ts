@@ -87,9 +87,34 @@ function zipRow(columns: string[], row: unknown): Record<string, unknown> {
   return {};
 }
 
-/** `{some: v}` -> v, `{none: []}` -> null, anything else passes through. */
+/**
+ * `{some: v}` -> v, `{none: []}` -> null (the reducer-call request body's
+ * Option encoding, and what this file's own header comment describes).
+ *
+ * Confirmed LIVE against a real `POST /v1/database/rosterd/sql` response
+ * that this is *not* what a query's row data actually uses: a row's Option
+ * column comes back as a positional 2-tuple instead --
+ * `[0, v]` for "some", `[1, []]` for "none" (SATS's tagged-variant row
+ * encoding; the schema/type-descriptor portion of the same response uses
+ * the `{some: ...}` object form, so the two shapes coexist in one payload
+ * depending on which part of it you're looking at). Without this, every
+ * Option-valued field read through the default HTTP-SQL tier -- sites'
+ * last_event, events' run_id/violation/trace_id, tasks' source -- silently
+ * rendered as `String([0, "..."])` instead of the real value.
+ *
+ * The `[0|1, ...]` check is safe for every Option field this module reads:
+ * none of their "some" payloads are themselves a 2-element array whose
+ * first element is the number 0 or 1 (they're strings or the Violation
+ * object below), so this can't misfire on real data here.
+ *
+ * Anything else (a plain value already unwrapped by the generated
+ * websocket client's own runtime) passes through unchanged.
+ */
 export function unwrapOption(value: unknown): unknown {
   if (value === null || value === undefined) return null;
+  if (Array.isArray(value) && value.length === 2 && (value[0] === 0 || value[0] === 1)) {
+    return value[0] === 0 ? value[1] : null;
+  }
   if (typeof value === 'object' && !Array.isArray(value)) {
     const record = value as Record<string, unknown>;
     const keys = Object.keys(record);
@@ -130,6 +155,15 @@ function strArray(value: unknown): string[] {
 function optViolation(value: unknown): Violation | null {
   const unwrapped = unwrapOption(value);
   if (!unwrapped || typeof unwrapped !== 'object') return null;
+  // A raw SQL query row encodes the nested Violation product type the same
+  // positional way as the row itself -- [rule, expected, actual], not a
+  // named object -- confirmed live alongside the Option tuple encoding
+  // above. The generated websocket client's own runtime should hand back a
+  // real {rule, expected, actual} object instead, so both are handled.
+  if (Array.isArray(unwrapped)) {
+    const [rule, expected, actual] = unwrapped;
+    return { rule: str(rule), expected: str(expected), actual: str(actual) };
+  }
   const record = unwrapped as Record<string, unknown>;
   return {
     rule: str(record.rule),
