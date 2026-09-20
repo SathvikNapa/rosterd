@@ -81,6 +81,9 @@ discipline as `rosterd-ingestion`'s own `/healthz` / `/manifests`.
 | `ROSTERD_KERNEL_INGESTION_URL` | `http://localhost:8000` | Polled for the confirmed manifest |
 | `ROSTERD_KERNEL_MANIFEST_ID` | — | Which manifest this site subscribes to. Unset = `manifest_not_ready` |
 | `ROSTERD_KERNEL_MANIFEST_POLL_SEC` | `5` | Poll interval |
+| `ROSTERD_KERNEL_DEFAULT_MIN_REPLICAS` | `1` | Applied to every agent from a real ingestion poll (ingestion has no `scaling` field yet) |
+| `ROSTERD_KERNEL_DEFAULT_MAX_REPLICAS` | `5` | Same — without this, every real-ingested manifest is silently capped at 1 replica forever |
+| `ROSTERD_KERNEL_DEFAULT_TARGET_CONCURRENCY` | `2` | Same |
 | `ROSTERD_KERNEL_DOCKER_MODE` | `simulated` | `simulated` simulates the instance pool (real dispatch, real agent, no real container); `real` uses the Docker SDK |
 | `ROSTERD_KERNEL_SIMULATED_AGENT_URL` | `http://localhost:9000` | simulated mode: every instance's real `/invoke` target |
 | `ROSTERD_KERNEL_DOCKER_NETWORK` | `rosterd-{site_id}` | real mode: this site's isolated network |
@@ -388,6 +391,22 @@ tests (`tests/test_run_store.py`, `tests/test_app.py`'s
 
 ## Known limitations
 
+- **Ingestion has no `scaling` field yet — every real manifest gets the
+  same one policy.** `manifest.py`'s `AgentManifestEntry.scaling` is a
+  per-agent field, but ingestion's real `GET /manifest/{id}` never sends
+  one (see `manifest.py`'s and `manifest_source.py`'s module docstrings),
+  so `IngestionPollManifestSource.fetch()` applies
+  `ROSTERD_KERNEL_DEFAULT_{MIN,MAX}_REPLICAS`/`_TARGET_CONCURRENCY`
+  uniformly to every agent from a real ingest — confirmed live, this is
+  what makes Federation's flash-sale button move the Monitor screen's pod
+  count at all; without it (the ScalingPolicy model's own bare default is
+  `max_replicas: 1`), every real-ingested manifest was silently capped at
+  exactly one replica per agent forever, no matter how much load hit it.
+  One shared policy for every agent on a site is a real, current limit —
+  a busier `fulfillment` and a rarely-called `refund_exception` can't have
+  different ceilings today. The real fix is a `scaling:` block ingestion
+  reads from `constraints.yaml` and threads through per node; this is the
+  stopgap until that lands.
 - **Single process, in-memory state.** The instance registry, run store,
   and budget tracker all live in process memory — fine for one kernel per
   site (the brief's own architecture), not something a second worker

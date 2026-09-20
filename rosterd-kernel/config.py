@@ -84,6 +84,30 @@ class Settings:
     manifest_poll_interval_sec: float = field(
         default_factory=lambda: _env_float("ROSTERD_KERNEL_MANIFEST_POLL_SEC", 5.0)
     )
+    #: manifest.py's ScalingPolicy defaults to min=1/max=1/target_concurrency=1
+    #: -- a deliberately fail-closed baseline for a hand-built ManifestDocument
+    #: (e.g. StaticManifestSource in tests) with no opinion of its own. Real
+    #: ingestion has no `scaling` field at all yet (see manifest.py and
+    #: manifest_source.py's own docstrings), so every entry it returns hits
+    #: that same max=1 floor -- confirmed live: with a real confirmed
+    #: manifest loaded, agent_metrics kept recording current_replicas=1,
+    #: desired_replicas=1 no matter how much load /simulate-load pushed
+    #: through, because desired is clamped to max_replicas=1 regardless of
+    #: queue depth. That silently breaks the autoscaling half of the demo
+    #: (Federation's flash-sale button, the Monitor screen) for any manifest
+    #: that came from a real ingest, not a hand-built test fixture. These
+    #: three settings are what IngestionPollManifestSource.fetch() applies
+    #: uniformly to every entry from a real ingestion poll, standing in for
+    #: a per-agent scaling policy until ingestion can actually express one.
+    default_min_replicas: int = field(
+        default_factory=lambda: _env_int("ROSTERD_KERNEL_DEFAULT_MIN_REPLICAS", 1)
+    )
+    default_max_replicas: int = field(
+        default_factory=lambda: _env_int("ROSTERD_KERNEL_DEFAULT_MAX_REPLICAS", 5)
+    )
+    default_target_concurrency: int = field(
+        default_factory=lambda: _env_int("ROSTERD_KERNEL_DEFAULT_TARGET_CONCURRENCY", 2)
+    )
 
     # ---- docker / instance pool -------------------------------------------------
     #: "simulated" (default) simulates the instance *pool* without a Docker

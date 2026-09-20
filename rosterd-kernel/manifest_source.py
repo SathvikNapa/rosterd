@@ -39,7 +39,7 @@ from typing import Protocol
 
 import httpx
 
-from manifest import ManifestDocument, ManifestIndex, ManifestStatus
+from manifest import ManifestDocument, ManifestIndex, ManifestStatus, ScalingPolicy
 
 logger = logging.getLogger("rosterd.kernel.manifest_source")
 
@@ -74,7 +74,28 @@ class IngestionPollManifestSource:
         url = f"{self._settings.ingestion_url.rstrip('/')}/manifest/{self._settings.manifest_id}"
         response = httpx.get(url, timeout=5.0)
         response.raise_for_status()
-        return ManifestDocument.model_validate(response.json())
+        document = ManifestDocument.model_validate(response.json())
+        return document.model_copy(update={"agents": [self._with_default_scaling(a) for a in document.agents]})
+
+    def _with_default_scaling(self, agent):
+        """Ingestion has no `scaling` field at all yet (see manifest.py's
+        module docstring), so every entry it returns arrives with
+        `ScalingPolicy()`'s hardcoded min=1/max=1 -- confirmed live: a real
+        confirmed manifest kept every agent pinned at current_replicas=1
+        regardless of load, since desired is clamped to max_replicas=1 no
+        matter how deep the queue got. Stand in with the kernel's own
+        configured default until ingestion can actually express a per-agent
+        policy, rather than silently locking out scaling for anything
+        that came from a real ingest."""
+        return agent.model_copy(
+            update={
+                "scaling": ScalingPolicy(
+                    min_replicas=self._settings.default_min_replicas,
+                    max_replicas=self._settings.default_max_replicas,
+                    target_concurrency=self._settings.default_target_concurrency,
+                )
+            }
+        )
 
 
 class ManifestSubscription:
