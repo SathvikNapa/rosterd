@@ -106,11 +106,18 @@ class Settings:
     #: /agents/{id}/simulate-load across multiple agents simultaneously and
     #: watch current_replicas actually climb into double digits in
     #: SpacetimeDB's agent_metrics, not just past the old ceiling of 5.
+    #: Trimmed from 20 to 10 after a real report: the ORIGINAL bottleneck
+    #: was scripts/black_friday_load.py's request volume (thousands of
+    #: real, near-simultaneous OS threads each holding a live HTTP
+    #: connection -- that's what pegged a machine, not this ceiling number
+    #: by itself), but a lower ceiling also means less scaler/coordinator/
+    #: SpacetimeDB bookkeeping churn per tick during a scale event, so both
+    #: were turned down together. 10 is still double digits.
     default_min_replicas: int = field(
         default_factory=lambda: _env_int("ROSTERD_KERNEL_DEFAULT_MIN_REPLICAS", 1)
     )
     default_max_replicas: int = field(
-        default_factory=lambda: _env_int("ROSTERD_KERNEL_DEFAULT_MAX_REPLICAS", 20)
+        default_factory=lambda: _env_int("ROSTERD_KERNEL_DEFAULT_MAX_REPLICAS", 10)
     )
     default_target_concurrency: int = field(
         default_factory=lambda: _env_int("ROSTERD_KERNEL_DEFAULT_TARGET_CONCURRENCY", 2)

@@ -35,14 +35,16 @@ making it look better; the backend work below is FYI, not a blocker.
   anywhere (Roster's assignee picker, Federation's pod grid, etc.) — if
   it does, that's now visibly wrong and worth fixing as part of the
   polish pass.
-- **Scaling ceilings raised to double digits.** A confirmed manifest's
-  agents now default to `max_replicas: 20` (was 5, was silently 1 before
-  that fix — see `rosterd-kernel/README.md`'s "A load burst can finish
-  faster than the scaler samples it" if Monitor/Federation ever look
-  static during a load test: it's a real 5-second sampling-interval
-  gotcha, not a frontend bug). Worth knowing so Federation's pod-count
-  layout doesn't visually break once a real load test pushes a pool to
-  15-20 instances instead of 1-3.
+- **Scaling ceilings raised to double digits** — `max_replicas: 10` on a
+  confirmed manifest's agents now (was 5, briefly 20, was silently 1
+  before the original fix; trimmed from 20 to 10 after a real report that
+  `scripts/black_friday_load.py`'s old defaults pegged a machine — see
+  that script's own docstring and `rosterd-kernel/README.md`'s "A load
+  burst can finish faster than the scaler samples it" if Monitor/
+  Federation ever look static during a load test: that part's a real
+  5-second sampling-interval gotcha, not a frontend bug). Worth knowing
+  so Federation's pod-count layout doesn't visually break once a real
+  load test pushes a pool to 8-10 instances instead of 1-3.
 - **`paused` is a real `RunStatus`** now (a run interrupted for
   human/reviewer approval — `POST /runs/{run_id}/resume` settles it,
   either from a human or from the kernel's own background reviewer

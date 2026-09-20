@@ -104,7 +104,7 @@ discipline as `rosterd-ingestion`'s own `/healthz` / `/manifests`.
 | `ROSTERD_KERNEL_MANIFEST_ID` | — | Which manifest this site subscribes to. Unset = `manifest_not_ready` |
 | `ROSTERD_KERNEL_MANIFEST_POLL_SEC` | `5` | Poll interval |
 | `ROSTERD_KERNEL_DEFAULT_MIN_REPLICAS` | `1` | Applied to every agent from a real ingestion poll (ingestion has no `scaling` field yet) |
-| `ROSTERD_KERNEL_DEFAULT_MAX_REPLICAS` | `5` | Same — without this, every real-ingested manifest is silently capped at 1 replica forever |
+| `ROSTERD_KERNEL_DEFAULT_MAX_REPLICAS` | `10` | Same — without this, every real-ingested manifest is silently capped at 1 replica forever |
 | `ROSTERD_KERNEL_DEFAULT_TARGET_CONCURRENCY` | `2` | Same |
 | `ROSTERD_KERNEL_DOCKER_MODE` | `simulated` | `simulated` simulates the instance pool (real dispatch, real agent, no real container); `real` uses the Docker SDK |
 | `ROSTERD_KERNEL_SIMULATED_AGENT_URL` | `http://localhost:9000` | simulated mode: every instance's real `/invoke` target |

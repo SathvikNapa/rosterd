@@ -13,18 +13,30 @@ demo-agent can fully drain between two ticks and never show up at all.
 The fix here is NOT a shortcut around that -- it's sustaining real,
 genuine load for longer than one tick interval, by repeatedly firing
 overlapping /simulate-load bursts rather than one, so there is always
-something in flight when the scaler actually looks. Verified live: this
-script, run against a real kernel + demo-agent + SpacetimeDB, scaled
-order_intake/catalog/fulfillment/payment to their configured
-max_replicas ceiling simultaneously (double digits, with
-ROSTERD_KERNEL_DEFAULT_MAX_REPLICAS raised from 5 to 20 for exactly this
-scenario) while refund_exception -- deliberately not loaded here, it is
-not a Black Friday high-traffic path -- stayed at its floor.
+something in flight when the scaler actually looks.
+
+**Defaults trimmed after a real report: this pegged a machine.** The
+first version defaulted to `--burst 150 --interval 0.5 --seconds 8` with
+NO throttle (`/simulate-load`'s own `rate_per_second=0` means "spawn all
+`count` dispatch threads back to back, no sleep between them" -- see
+simulate.py). At 4 agents x up to ~16 overlapping rounds x 150 threads
+each, that's on the order of several thousand real OS threads spawned
+*inside the kernel process* over a few seconds, each holding a real HTTP
+connection open to demo-agent -- genuinely heavy for any machine, not
+just a slow one. Still verified live at the original settings (scaled
+all four to their ceiling simultaneously with real queue depth), but the
+defaults below are deliberately much gentler: a real --rate throttle is
+now threaded through to /simulate-load's own rate_per_second (spreading
+each burst's thread creation out instead of firing it all at once), and
+burst/round counts are both cut roughly 10x. Still enough overlapping
+load to visibly scale a few agents past 1 replica; turn the numbers back
+up with the flags below if your machine can take it and you want the
+full double-digit ceiling climb.
 
 Usage:
     .venv/bin/python scripts/black_friday_load.py
     .venv/bin/python scripts/black_friday_load.py --kernel http://localhost:8100 \\
-        --seconds 8 --burst 150 --interval 0.5 \\
+        --seconds 6 --burst 15 --interval 1.0 --rate 8 \\
         --agents order_intake catalog fulfillment payment
 
 agent_metrics lives in SpacetimeDB, not a kernel endpoint, so by default
@@ -54,10 +66,18 @@ def fire_burst(kernel: str, agent_id: str, count: int, rate_per_second: float) -
         return json.loads(resp.read())
 
 
-def sustain(kernel: str, agents: list[str], seconds: float, burst: int, interval: float) -> None:
+def sustain(kernel: str, agents: list[str], seconds: float, burst: int, interval: float, rate: float) -> None:
     """Keep firing overlapping bursts at every agent for `seconds`, so
     there is always something in flight regardless of how fast any one
-    burst drains -- see the module docstring for why this matters."""
+    burst drains -- see the module docstring for why this matters.
+
+    `rate` is a REAL throttle, not cosmetic: it's passed straight through
+    as /simulate-load's own `rate_per_second`, which controls how fast the
+    KERNEL spawns dispatch threads for one burst (simulate.py's
+    `_fire_all`). `rate=0` there means "no sleep between thread spawns" --
+    the thing that pegged a machine the first time this script existed.
+    A real rate spreads each burst's own thread creation out instead of
+    firing it all in one instant."""
     deadline = time.monotonic() + seconds
     round_num = 0
     while time.monotonic() < deadline:
@@ -65,12 +85,12 @@ def sustain(kernel: str, agents: list[str], seconds: float, burst: int, interval
         threads = []
         for agent_id in agents:
             t = threading.Thread(
-                target=lambda a=agent_id: fire_burst(kernel, a, burst, rate_per_second=0),
+                target=lambda a=agent_id: fire_burst(kernel, a, burst, rate_per_second=rate),
                 daemon=True,
             )
             t.start()
             threads.append(t)
-        print(f"round {round_num}: fired {burst} unthrottled requests at each of {agents}", file=sys.stderr)
+        print(f"round {round_num}: fired {burst} requests at each of {agents}, throttled to {rate}/s", file=sys.stderr)
         time.sleep(interval)
 
 
@@ -123,15 +143,24 @@ def main() -> int:
         "--agents", nargs="+", default=["order_intake", "catalog", "fulfillment", "payment"],
         help="Black Friday's high-traffic agents. refund_exception is deliberately excluded by default.",
     )
-    parser.add_argument("--seconds", type=float, default=8.0, help="How long to sustain overlapping bursts.")
-    parser.add_argument("--burst", type=int, default=150, help="Requests per agent per round, unthrottled.")
-    parser.add_argument("--interval", type=float, default=0.5, help="Seconds between rounds.")
+    parser.add_argument("--seconds", type=float, default=6.0, help="How long to sustain overlapping bursts.")
+    parser.add_argument("--burst", type=int, default=15, help="Requests per agent per round.")
+    parser.add_argument("--interval", type=float, default=1.0, help="Seconds between rounds.")
+    parser.add_argument(
+        "--rate", type=float, default=8.0,
+        help="Requests/sec within one burst, passed to /simulate-load's own throttle -- "
+        "0 means unthrottled (all of --burst spawned as fast as the kernel can loop, which is "
+        "what pegged a machine at the old defaults; see the module docstring before raising this).",
+    )
     parser.add_argument("--watch", action="store_true", help="Tail agent_metrics via the spacetime CLI while loading.")
     parser.add_argument("--spacetime-module", default="rosterd")
     parser.add_argument("--spacetime-server", default="http://localhost:3000")
     args = parser.parse_args()
 
-    print(f"Black Friday load: {args.agents} for {args.seconds}s ({args.burst}/round every {args.interval}s)")
+    print(
+        f"Black Friday load: {args.agents} for {args.seconds}s "
+        f"({args.burst}/round every {args.interval}s, throttled to {args.rate}/s per round)"
+    )
 
     watcher = None
     if args.watch:
@@ -142,7 +171,7 @@ def main() -> int:
         )
         watcher.start()
 
-    sustain(args.kernel, args.agents, args.seconds, args.burst, args.interval)
+    sustain(args.kernel, args.agents, args.seconds, args.burst, args.interval, args.rate)
 
     if watcher is not None:
         watcher.join(timeout=args.seconds + 5)
