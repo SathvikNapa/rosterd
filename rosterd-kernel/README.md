@@ -52,6 +52,28 @@ grow or shrink toward it (only ever killing *idle* instances to shrink),
 write a full `agent_metrics` row regardless of whether anything changed,
 and write an `agents` row only when the pool itself changed.
 
+**A load burst can finish faster than the scaler samples it.** The scaler
+only *sees* load at the instant of its own tick — `working + queued` read
+once per `ROSTERD_KERNEL_SCALER_INTERVAL_SEC`, not continuously. Against a
+fast agent (demo-agent in `AGENT_MODE=scripted`, no network call per
+request), a `/simulate-load` burst of even a few hundred requests can fully
+drain in well under a second — faster than the default 5s tick — so two
+consecutive samples can straddle the whole spike and show no scaling at
+all, even though real load genuinely happened in between. Confirmed live:
+firing `{"count": 300, "rate_per_second": 0}` at four agent pools at once
+produced zero visible scaling at the default interval, but the exact same
+load, sustained for several seconds (repeated overlapping bursts) with
+`ROSTERD_KERNEL_SCALER_INTERVAL_SEC=1`, scaled all four to their
+`max_replicas` ceiling and showed real `in_flight`/`queued` counts in
+`agent_metrics` in the process. Two ways to get a reliably visible scaling
+demo: sustain the load for longer than one tick interval (several
+overlapping `/simulate-load` calls rather than one), or lower
+`ROSTERD_KERNEL_SCALER_INTERVAL_SEC` for the session. `AGENT_MODE=llm`
+sidesteps this differently — a real model call naturally takes long enough
+per request that a burst builds a visible backlog even at the default
+interval, which is what the original (fulfillment-only) flash-sale demo
+was implicitly relying on.
+
 ## Endpoints
 
 | Method | Path | Purpose |
