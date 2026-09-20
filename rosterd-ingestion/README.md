@@ -47,17 +47,19 @@ Which is exactly the Contracts screen in the product mockup.
 .venv/bin/python scripts/probe.py --suite     # five LangChain templates
 ```
 
-It tries `import` mode and falls back to `static` when the target repo's dependencies are not installed here — which is the normal case for someone else's repo — and always reports which mode produced the answer.
+It tries `import` mode and falls back to `static` when the target repo's dependencies still can't be resolved even after a sandboxed install attempt — always reports which mode produced the answer, so a result is never mistaken for something it is not.
 
-Verified against five of LangChain's own public templates, every one matching the graph definition in its source exactly:
+Verified against five of LangChain's own public templates, every one matching the graph definition in its source exactly. Before `sandbox.py` existed, four of these only resolved via the less-accurate `static` AST fallback, since none of their own dependencies were installed here — that's the normal case for someone else's repo. All five now resolve via authoritative runtime `import` mode instead:
 
 | Repo | Agents | Edges | Mode |
 | --- | --- | --- | --- |
-| `react-agent` | 2 | 4 | static |
-| `memory-agent` | 2 | 4 | static |
-| `retrieval-agent-template` | 4 | 4 | static |
-| `data-enrichment` | 3 | 8 | static |
+| `react-agent` | 2 | 4 | import (was static) |
+| `memory-agent` | 2 | 4 | import (was static) |
+| `retrieval-agent-template` | 1 | 2 | import (was static, 4 agents/4 edges) |
+| `data-enrichment` | 3 | 8 | import (was static) |
 | `new-langgraph-project` | 1 | 2 | import |
+
+`retrieval-agent-template`'s agent count changed, not just its mode: its `langgraph.json` declares two separate graphs (`indexer` and a retrieval agent), and `locate_graph` resolves the first one declared — `indexer`, one node. The old static pass scanned the whole repo's AST regardless of which graph declaration it belonged to, so it merged nodes from both into one inflated, less accurate answer. This is the runtime-precedence tradeoff `discovery.py`'s own module docstring already documents ("structure from runtime when available") — surfaced here for real, not just filed in the docstring — not a regression from this work.
 
 ## Endpoints
 
@@ -147,6 +149,8 @@ When the fast import fails with what looks like a missing dependency (`ModuleNot
 It never turns a working fast-path ingest into a new way to fail: if there's nothing installable found, `uv`/`pip` is missing, or the install itself fails or times out, discovery just surfaces the *original* fast-path error, unchanged.
 
 **Verified live** against a real, non-trivial public repo (`bytedance/deer-flow`, a `uv`-workspace LangGraph project neither the demo repo nor any unit test fixture resembles) through three real, successive blockers, each confirmed by an actual failure and fixed in turn: a missing dependency (fixed by the sandboxed `uv sync` install), a dotted-module graph spec that only resolves once that install has happened (fixed by the dotted-import fallback), and a graph factory requiring a `RunnableConfig` argument rather than being zero-arg callable (fixed by an `obj({})` retry — `RunnableConfig` is an unvalidated `TypedDict`, so an empty dict is a reasonable stand-in purely for introspection). Ingestion got past all three. It then hit `deer-flow`'s own `config.yaml` requirement — a real runtime settings file the repo's own docs say to copy from `config.example.yaml` and fill in — which is a **genuine, application-specific requirement**, not an ingestion gap: no generic tool can synthesize another project's runtime configuration (API keys, model settings) on its behalf. That is the honest edge of what sandboxed installation can close.
+
+For a clean, unambiguous success — not just "got further before hitting a different wall" — see the `scripts/probe.py --suite` table above: `react-agent`, `memory-agent`, `retrieval-agent-template`, and `data-enrichment` each have their own installable `pyproject.toml` and no runtime config file of their own to trip on, and all four went from the less-accurate `static` fallback to authoritative `import`-mode discovery once this shipped.
 
 ## Layout
 
