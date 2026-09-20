@@ -92,13 +92,37 @@ export async function connectViaBindings(
 
   let connection: Any = null;
 
+  /**
+   * Coalesced, not called directly on every row event. Found live, this is
+   * why "going live" could take a long time on a table with a lot of
+   * history: onApplied fires once and is fast (measured: 32k+ historical
+   * agent_metrics rows over the wire in ~80ms, the network was never the
+   * problem), but the SDK also fires a genuine onInsert for every row in
+   * that initial backlog -- 32,395 of them, measured, all in one tight
+   * burst right after onApplied. Calling readTables() (a full map+sort+
+   * slice of every table) on each of those individually is O(rows^2), not
+   * O(rows): for tens of thousands of historical rows (this session's own
+   * load-testing produced exactly that many), that is the actual
+   * multi-second-to-tens-of-seconds hang, not anything about the
+   * connection itself. requestAnimationFrame collapses any number of
+   * onInsert/onUpdate/onDelete calls that land in the same frame into one
+   * real readTables() call -- correct for the historical-backlog burst
+   * AND for a genuine live burst (a real load test hammering this table),
+   * not just a one-off fix for today's accumulated test data.
+   */
+  let scheduled = false;
   const snapshot = () => {
-    if (!connection?.db) return;
-    try {
-      onTables(readTables(connection));
-    } catch (error) {
-      onError(error);
-    }
+    if (!connection?.db || scheduled) return;
+    scheduled = true;
+    requestAnimationFrame(() => {
+      scheduled = false;
+      if (!connection?.db) return;
+      try {
+        onTables(readTables(connection));
+      } catch (error) {
+        onError(error);
+      }
+    });
   };
 
   connection = DbConnection.builder()
