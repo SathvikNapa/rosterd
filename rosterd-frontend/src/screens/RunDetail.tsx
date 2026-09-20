@@ -275,11 +275,13 @@ function describeViolation(violation: { rule: string; expected: string; actual: 
 function statusColor(status: string | undefined): string {
   if (status === 'killed') return 'var(--danger)';
   if (status === 'done') return 'var(--ok)';
+  if (status === 'paused') return 'var(--warn)';
   return 'var(--accent)';
 }
 
 function labelFor(status: string): string {
   if (status === 'done') return 'Completed within contract';
   if (status === 'killed') return 'Killed';
+  if (status === 'paused') return 'Paused — awaiting review';
   return 'Working';
 }

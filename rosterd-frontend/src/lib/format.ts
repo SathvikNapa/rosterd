@@ -97,6 +97,8 @@ export function eventTone(status: EventStatus): Tone {
       return 'ok';
     case 'working':
       return 'accent';
+    case 'paused':
+      return 'warn';
     case 'scaled_up':
       return 'warn';
     default:

@@ -10,7 +10,10 @@
 
 export type Priority = 'low' | 'medium' | 'high';
 export type Confidence = 'high' | 'medium' | 'low';
-export type RunStatus = 'working' | 'done' | 'killed';
+/** 'paused' is new: a run interrupted at demo-agent's interrupt(), waiting
+ *  on POST /runs/{id}/resume -- from a human, or from the kernel's own
+ *  reviewer agent (reviewer.py), which usually resolves it within seconds. */
+export type RunStatus = 'working' | 'done' | 'killed' | 'paused';
 export type SiteStatus = 'healthy' | 'violation' | 'offline';
 export type ManifestStatus = 'draft' | 'confirmed';
 export type InstanceStatus = 'idle' | 'working';
