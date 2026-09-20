@@ -110,6 +110,94 @@ class TestConstraintKill:
         assert instances == []
 
 
+class TestConstraintFollowsTheActualNode:
+    """Real bug, found live against the running stack, not hypothesized:
+    dispatching at an entry agent (order_intake) whose graph routes
+    internally to a gated one (refund_exception, max_refund_usd: 100)
+    within the SAME /invoke call used to check the ENTRY agent's
+    constraints against the tool call -- order_intake's, which has no
+    amount rule at all -- instead of the node that actually produced the
+    tool call. Reproduced 3/3 times against a real kernel + real demo-agent
+    + real LLM: a $180 refund (80% over the $100 cap) settled `done` with
+    `violation: null`. Root cause: `_settle` used the originally-dispatched
+    agent's manifest entry unconditionally. Fixed by reading
+    `response.next_node` -- which demo-agent's own graph.py sets on the
+    entry node and never clears on the way through a routed-to node, so it
+    genuinely reports which node the response came from -- and checking
+    THAT node's constraints when it names one in the manifest.
+
+    FULFILLMENT/REFUND stand in for order_intake/refund_exception here:
+    FULFILLMENT has only a qty rule, REFUND has the amount rule, and
+    REFUND is only reachable via FULFILLMENT (entry_only_via) -- the same
+    shape as the real bug, not a special-purpose fixture."""
+
+    def test_a_direct_dispatch_that_routes_onward_is_checked_against_the_routed_nodes_contract(
+        self, client, fake_demo_agent
+    ):
+        fake_demo_agent.set(
+            lambda payload: FakeHttpxResponse(
+                200,
+                {
+                    "output": "routed to refund",
+                    "tool_calls": [{"tool": "issue_refund", "args": {"order_id": "ORD-1", "amount": 180}}],
+                    "next_node": "refund",
+                },
+            )
+        )
+        response = dispatch(client, agent_id="fulfillment")
+        run = client.get(f"/runs/{response.json()['run_id']}").json()
+        assert run["status"] == "killed"
+        assert run["violation"]["rule"] == "tool_calls[*].args.amount lte 100"
+        assert run["violation"]["actual"] == "180"
+
+    def test_a_resumed_run_that_routed_onward_is_also_checked_against_the_routed_nodes_contract(
+        self, client, fake_demo_agent
+    ):
+        """The exact scenario that reproduced live: paused at
+        refund_exception's interrupt(), approved by the reviewer, resumed
+        -- resume_run's own settle call must apply the same fix as a fresh
+        dispatch, not just the direct path above."""
+        fake_demo_agent.set(lambda payload: FakeHttpxResponse(200, pending_approval()))
+        run_id = dispatch(client, agent_id="fulfillment").json()["run_id"]
+
+        fake_demo_agent.set(
+            lambda payload: FakeHttpxResponse(
+                200,
+                {
+                    "output": "approved anyway",
+                    "tool_calls": [{"tool": "issue_refund", "args": {"order_id": "ORD-1", "amount": 180}}],
+                    "next_node": "refund",
+                },
+            )
+        )
+        resumed = client.post(f"/runs/{run_id}/resume", json={"approved": True, "reviewer": "reviewer-agent"})
+        body = resumed.json()
+        assert body["status"] == "killed"
+        assert body["violation"]["rule"] == "tool_calls[*].args.amount lte 100"
+
+    def test_a_next_node_outside_the_manifest_falls_back_to_the_dispatched_agents_own_contract(
+        self, client, fake_demo_agent
+    ):
+        """next_node is demo-agent's own internal state, not something the
+        kernel should trust blindly -- a value that isn't a real agent in
+        the confirmed manifest must not crash or silently skip the check,
+        it should fall back to exactly today's behavior."""
+        fake_demo_agent.set(
+            lambda payload: FakeHttpxResponse(
+                200,
+                {
+                    "output": "ok",
+                    "tool_calls": [{"tool": "reserve_inventory", "args": {"qty": 999}}],
+                    "next_node": "__end__",
+                },
+            )
+        )
+        response = dispatch(client, agent_id="fulfillment")
+        run = client.get(f"/runs/{response.json()['run_id']}").json()
+        assert run["status"] == "killed"
+        assert run["violation"]["rule"] == "tool_calls[*].args.qty lte 50"
+
+
 class TestPauseAndResume:
     """Previously a paused run (demo-agent's interrupt()) was silently
     recorded as `done` -- indistinguishable from actually finishing, and

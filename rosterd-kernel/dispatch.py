@@ -231,7 +231,30 @@ class Dispatcher:
         enforcement a fresh dispatch would be -- a reviewer agent (or a
         human) approving something does not bypass the kernel's own
         constraint check, only demo-agent's interrupt() gate.
+
+        `entry` is whichever agent was originally dispatched, but the tool
+        call actually being checked can have come from a DIFFERENT node the
+        graph routed to internally within that same /invoke -- confirmed
+        live, this was a real gap: dispatching at `order_intake` (no
+        constraints of its own) routes internally to `refund_exception`
+        (max_refund_usd: 100) within the same call, and this used to check
+        `entry.constraints` verbatim -- order_intake's, empty -- so a
+        refund well over the cap sailed through with `violation: null`,
+        reproduced 3/3 times against the live kernel. `response.next_node`
+        is how a real fix is possible at all: order_intake_node sets it to
+        the node it's routing to, and refund_exception_node's own return
+        never touches that key, so it survives unchanged to the end of the
+        call -- the response genuinely reports which node the tool call
+        came from, the kernel just wasn't reading it. Falls back to `entry`
+        itself whenever next_node is absent or names something outside the
+        confirmed manifest, which covers every node that doesn't route
+        onward (fulfillment, catalog, payment, and order_intake's own
+        non-fraud path) exactly as before.
         """
+        if response.next_node and response.next_node != agent_id:
+            routed_entry = self._manifest_index.get(response.next_node)
+            if routed_entry is not None:
+                entry = routed_entry
         pending = PENDING_HUMAN_APPROVAL_RE.match(response.output or "")
         if pending and not response.tool_calls:
             thread_id, reason = pending.group(1), pending.group(2)
@@ -257,7 +280,16 @@ class Dispatcher:
         violation = self._budget_tracker.check(run_id)
         if violation is None:
             with self._telemetry.span(
-                "constraint_check", **{"rosterd.agent_id": agent_id, "rosterd.rule_count": len(entry.constraints)}
+                "constraint_check",
+                **{
+                    "rosterd.agent_id": agent_id,
+                    # entry.id can legitimately differ from agent_id now (see
+                    # this method's docstring) -- both are worth having in
+                    # the trace: which agent was dispatched, and whose
+                    # contract actually got checked.
+                    "rosterd.constraints_from": entry.id,
+                    "rosterd.rule_count": len(entry.constraints),
+                },
             ) as constraint_span:
                 violation = evaluate_all(entry.constraints, response, policy=self._policy_store)
                 constraint_span.set_attribute("rosterd.violated", violation is not None)
