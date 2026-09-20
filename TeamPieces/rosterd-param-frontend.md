@@ -155,7 +155,7 @@ import { DbConnection } from './module_bindings';
 
 const conn = DbConnection.builder()
   .withUri('ws://localhost:3000')
-  .withModuleName('rosterd')
+  .withDatabaseName('rosterd')
   .onConnect((conn) => {
     conn.subscriptionBuilder()
       .onApplied(() => console.log('subscribed'))
@@ -266,12 +266,20 @@ render `"View trace"` linking to `{JAEGER_BASE_URL}/trace/{trace_id}`.
 4. **Per-constraint source/confidence isn't in ingestion's response**
    (see the Ingestion table above) — Review's colored source badges need
    either a fallback rendering or an ingestion-side change.
-5. **The subscription/client flow above is unverified.** I built and
-   proved the write side (reducers, via raw HTTP and via kernel/
-   coordinator's real code) and the CLI read side (`spacetime sql`). I did
-   not stand up a browser client and subscribe. Budget time to debug the
-   generated-bindings step — it's the one part of this handoff that's
-   "should work per the SDK's own docs," not "watched it work."
+5. **RESOLVED.** ~~The subscription/client flow above is unverified.~~ It
+   was tried standalone (a script through the real generated
+   `DbConnection`, not just the browser app), and that's exactly how a
+   real bug surfaced: `src/lib/live/bindings.ts` called
+   `.withModuleName(...)`, which isn't a method the SDK's builder actually
+   has — it's `.withDatabaseName(...)`. `connectViaBindings` was throwing
+   on every attempt and silently falling back to HTTP polling
+   (`LiveProvider.tsx` catches and degrades rather than blanking the UI,
+   so nothing ever surfaced this — the nav pill just read "Polling"
+   forever instead of "Live"). Fixed. Confirmed live: subscribed, fired a
+   real kernel dispatch, watched `events.onInsert` deliver over the
+   websocket in ~1ms. Run `npm run gen:bindings` (needs the `spacetime`
+   CLI) and restart the dev server if your `src/module_bindings/` predates
+   this fix — the nav pill should read "Live" now, not "Polling".
 
 ## Everything else the brief already tells you
 

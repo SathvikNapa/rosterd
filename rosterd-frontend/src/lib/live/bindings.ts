@@ -8,10 +8,24 @@
  * reports "unavailable" when the folder is absent, leaving ./sql.ts to serve
  * the same rows over HTTP.
  *
- * Everything below is deliberately loose about the generated surface
- * (property names, row casing) because rosterd-param-frontend.md gap 5 flags
- * the browser-subscribe path as unverified. Rows go through the same
- * normalizers the SQL path uses, so both produce identical LiveTables.
+ * Verified live, not just "per the SDK's docs" (closes rosterd-param-frontend.md
+ * gap 5): connected a standalone script through the real generated
+ * DbConnection against a running SpacetimeDB instance, subscribed, fired a
+ * real kernel dispatch, and watched `events.onInsert` fire in ~1ms over the
+ * websocket. That run is what caught the actual bug this file shipped with
+ * for a while -- `.withModuleName(...)` isn't a real method on the SDK's
+ * builder (it's `.withDatabaseName(...)`), so `connectViaBindings` always
+ * threw immediately and every session silently fell back to ./sql.ts's HTTP
+ * polling, nav pill reading "Polling" forever, with no error surfaced
+ * anywhere a person would see it (the throw is caught and swallowed by
+ * design, so a broken subscribe degrades instead of blanking the UI -- see
+ * LiveProvider.tsx). Fixed; a real websocket connection now reaches this
+ * far and the nav pill should read "Live".
+ *
+ * Everything below is still deliberately loose about the generated surface
+ * (property names, row casing) since the exact shape can drift between
+ * `spacetime generate` runs. Rows go through the same normalizers the SQL
+ * path uses, so both produce identical LiveTables.
  */
 import { config, spacetimeWsUrl } from '../config';
 import type { LiveTables } from '../types';
@@ -89,7 +103,7 @@ export async function connectViaBindings(
 
   connection = DbConnection.builder()
     .withUri(spacetimeWsUrl())
-    .withModuleName(config.spacetimeModule)
+    .withDatabaseName(config.spacetimeModule)
     .onConnect((conn: Any) => {
       conn
         .subscriptionBuilder()
