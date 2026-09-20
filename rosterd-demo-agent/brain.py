@@ -207,7 +207,21 @@ class LLMBrain:
         return self._ask(Reservation, SYSTEM_FULFILLMENT, text, lambda: self._fallback.propose_reservation(text, ctx))
 
     def propose_refund(self, text: str, ctx: dict) -> RefundProposal:
-        return self._ask(RefundProposal, SYSTEM_REFUND, text, lambda: self._fallback.propose_refund(text, ctx))
+        proposal = self._ask(RefundProposal, SYSTEM_REFUND, text, lambda: self._fallback.propose_refund(text, ctx))
+        if proposal.amount <= 0:
+            # Confirmed live against a real Grok call: text that plainly
+            # states a dollar figure ("a $180 refund request on order
+            # ORD-7001...") sometimes still comes back with amount=0 --
+            # not a call failure (that already falls back above), a
+            # structurally valid but wrong answer. A genuine "refund
+            # nothing" is not a real scenario this graph has; $0 is far
+            # more likely an extraction miss than an intentional answer,
+            # so fall back to the same deterministic regex extraction (and
+            # the same house-policy cap) the scripted brain already uses,
+            # rather than silently surfacing "$0.00" on a run that quite
+            # obviously proposed refunding *something*.
+            proposal = self._fallback.propose_refund(text, ctx)
+        return proposal
 
     def propose_stock_check(self, text: str, ctx: dict) -> StockCheck:
         return self._ask(StockCheck, SYSTEM_CATALOG, text, lambda: self._fallback.propose_stock_check(text, ctx))

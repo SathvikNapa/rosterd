@@ -144,6 +144,33 @@ def test_llm_mode_falls_back_when_call_fails():
     assert b.propose_refund("refund $30 on ORD-1", {}).amount == 30
 
 
+def test_llm_mode_falls_back_when_the_model_proposes_zero_on_text_with_a_real_amount():
+    """Found live against a real Grok call: text that plainly states a
+    dollar figure sometimes still comes back amount=0 -- a structurally
+    valid but wrong answer, not a call failure (that's the test above).
+    $0 is far more likely an extraction miss than a genuine answer, so
+    this falls back to the same regex extraction the scripted brain uses
+    rather than silently showing "$0.00" on a run that obviously proposed
+    refunding something."""
+    def zero(schema, system, user):
+        return brain.RefundProposal(order_id="ORD-7001", amount=0, reason="")
+
+    b = brain.LLMBrain(structured_call=zero)
+    proposal = b.propose_refund("Customer is asking for a $180 refund on order ORD-7001.", {})
+    assert proposal.order_id == "ORD-7001"
+    assert proposal.amount == 100.0  # capped at POLICY_CAP, same as the scripted brain would
+
+
+def test_llm_mode_does_not_override_a_genuine_nonzero_proposal():
+    """The zero-fallback above must not kick in for an ordinary answer --
+    only exactly 0 is treated as suspect."""
+    def real_answer(schema, system, user):
+        return brain.RefundProposal(order_id="ORD-9", amount=42, reason="within policy")
+
+    b = brain.LLMBrain(structured_call=real_answer)
+    assert b.propose_refund("refund $42 on ORD-9", {}).amount == 42
+
+
 def test_llm_mode_end_to_end_without_key_still_works():
     # Pop every provider key _llm_structured_call checks, not just
     # Anthropic's -- otherwise this test silently stops exercising the
