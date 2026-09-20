@@ -19,44 +19,37 @@ import type { ManifestResponse } from '../lib/types';
 
 /**
  * The shape constraints_loader.py actually accepts: a `constraints` mapping
- * keyed by GRAPH NODE NAME. An empty mapping is legal syntactically, but NOT
- * a safe default: `direct_assignable` is never inferred from the code, only
- * ever read from this YAML (rosterd-kernel/manifest.py:
- * `direct_assignable = bool(block.direct_assignable) if ... else False` --
- * there is no AST-based fallback, despite `refund_node.py`'s own docstring
- * describing interrupt() as "the signal ingestion reads"). An empty mapping
- * submitted through this screen means every agent comes back
- * direct_assignable: false, entry_only_via: [] -- unreachable, and Ask has
- * nothing to propose against. Confirmed live: reproduced the exact bug
- * report ("No agent in this manifest is directly assignable") by ingesting
- * with `constraints: {}` against the real repo below.
+ * keyed by GRAPH NODE NAME. `direct_assignable` and `entry_only_via` are now
+ * INFERRED when omitted here (rosterd-ingestion/manifest.py: defaults to
+ * `not node.has_interrupt`, via a real AST scan for a call named `interrupt`
+ * in the node's function body -- astscan.calls_interrupt -- and
+ * `entry_only_via` infers from conditional graph edges into a gated node).
+ * That's new: it used to be a hard `direct_assignable: false` for any node
+ * with no explicit YAML entry, which meant an empty `constraints: {}`
+ * submitted through this screen made every agent unreachable and Ask had
+ * nothing to propose against (confirmed live: reproduced the exact bug
+ * report, "No agent in this manifest is directly assignable", this way).
  *
- * So the default here is the real constraints.yaml for
- * https://github.com/SathvikNapa/rosterd-example (this screen's own default
- * repo URL) -- verified against the live service to produce
- * order_intake/fulfillment: direct_assignable true,
- * refund_exception: direct_assignable false + entry_only_via [order_intake].
- * Point this screen at a different repo and this YAML needs updating too;
- * it isn't inferred from the URL.
+ * What's still NOT inferred: numeric caps (`max_qty`, `max_refund_usd`)
+ * mirror real `Field(le=...)` limits on the tool schemas, but nothing reads
+ * those schemas yet -- they still have to be typed here. So the minimal
+ * correct YAML for a repo is just the business numbers, nothing else; this
+ * default is rosterd-example's real ones, verified live against the running
+ * service to produce the exact same contract as the old fully-spelled-out
+ * version (order_intake/fulfillment assignable, refund_exception gated with
+ * entry_only_via: [order_intake]) with none of direct_assignable,
+ * entry_only_via, or purpose typed by hand.
  */
-const DEFAULT_CONSTRAINTS_YAML = `# constraints.yaml — merged over what static analysis infers.
-# Keys under \`constraints\` must be node names from the graph.
-# direct_assignable is NOT inferred from the code -- set it explicitly per
-# node or nothing here will be dispatchable. This is rosterd-example's real
-# constraints.yaml (https://github.com/SathvikNapa/rosterd-example).
+const DEFAULT_CONSTRAINTS_YAML = `# constraints.yaml — merged over what discovery infers from the code.
+# direct_assignable and entry_only_via are now inferred (interrupt() +
+# graph edges) when omitted -- only the business numbers below still need a
+# human. This is rosterd-example's real repo
+# (https://github.com/SathvikNapa/rosterd-example).
 version: 1
 constraints:
-  order_intake:
-    purpose: Classifies an incoming order as standard, high-value, or fraud-flagged
-    direct_assignable: true
   fulfillment:
-    purpose: Reserves inventory for a standard/high-value order
-    direct_assignable: true
     max_qty: 50
   refund_exception:
-    purpose: Issues refunds; calls interrupt() for fraud-flagged/high-value orders
-    direct_assignable: false
-    entry_only_via: [order_intake]
     max_refund_usd: 100
 `;
 
