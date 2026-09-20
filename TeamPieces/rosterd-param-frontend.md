@@ -137,6 +137,8 @@ for completeness): `update_agent_status`, `record_agent_metrics`,
 | `POST` | `/manifest/{id}/confirm` | Body `{agents: AgentManifestEntry[]}` (edited rows from Review). Returns `{manifest_id, status: "confirmed"}`. This is the Review screen's "Confirm and go live" button. |
 | `POST` | `/ask/parse` | Body `{manifest_id, text}`. Returns `{agent_id, task: {title, description, priority, expectation_criteria[]}, confidence: "high"⎮"medium"⎮"low"}`. This is the Ask screen's proposed-task card. |
 
+**A real, public `repo_url` to test Ingest against:** `https://github.com/SathvikNapa/rosterd-example` — a standalone mirror of `rosterd-demo-agent` (kept in sync by copying, not a submodule), pushed specifically so ingestion has a real `git clone`-able URL instead of needing `ROSTERD_LOCAL_REPO_ROOT` pointed at a locally-staged fixture. This is now the frontend's Ingest-screen default. Verified live: `POST /ingest` against it discovers all three agents (`order_intake`, `fulfillment`, `refund_exception`) exactly like the monorepo copy does.
+
 `AgentManifestEntry`: `{id, node, purpose, tools[], direct_assignable, entry_only_via[], constraints: {max_refund_usd?, requires_prior_node?, ...any extra keys}}`.
 Note `constraints` here is a **free-form object**, not the
 `list[ConstraintRule]` (field/op/value/source/confidence) shape the kernel

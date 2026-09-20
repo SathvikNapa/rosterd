@@ -34,7 +34,12 @@ export function Ingest() {
   const navigate = useNavigate();
   const session = useSession();
 
-  const [repoUrl, setRepoUrl] = useState(session.repoUrl || 'https://github.com/acme/orders-agents');
+  // https://github.com/SathvikNapa/rosterd-example is a real, public mirror
+  // of rosterd-demo-agent -- a clean `git clone` away, unlike the acme
+  // placeholder this used to default to (which doesn't exist and made
+  // ingest fail with repo_fetch_failed on first load). See
+  // TeamPieces/rosterd-param-frontend.md's Ingest gap.
+  const [repoUrl, setRepoUrl] = useState(session.repoUrl || 'https://github.com/SathvikNapa/rosterd-example');
   const [constraintsYaml, setConstraintsYaml] = useState(DEFAULT_CONSTRAINTS_YAML);
   const [showYaml, setShowYaml] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -87,7 +92,7 @@ export function Ingest() {
             type="text"
             value={repoUrl}
             onChange={(event) => setRepoUrl(event.target.value)}
-            placeholder="https://github.com/acme/orders-agents"
+            placeholder="https://github.com/SathvikNapa/rosterd-example"
             spellCheck={false}
           />
         </div>
