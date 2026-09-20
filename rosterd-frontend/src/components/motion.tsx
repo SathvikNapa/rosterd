@@ -50,5 +50,9 @@ export function StaggerBody({ children }: { children: ReactNode }) {
 }
 
 export function StaggerTr({ children }: { children: ReactNode }) {
-  return <motion.tr variants={staggerRow}>{children}</motion.tr>;
+  return (
+    <motion.tr variants={staggerRow} whileHover={{ backgroundColor: 'var(--surface-muted)' }} transition={{ duration: 0.15 }}>
+      {children}
+    </motion.tr>
+  );
 }

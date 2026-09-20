@@ -10,10 +10,13 @@
  * deliberately not the manual /scale endpoint, so what you watch is the
  * scaler reacting to real load.
  */
+import { motion } from 'motion/react';
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Badge, Banner, ConcurrencyDots, Empty, LoadBar, TraceLink } from '../components/ui';
+import { AnimatedNumber } from '../components/AnimatedNumber';
+import { Badge, Banner, Button, ConcurrencyDots, Empty, LoadBar, TraceLink } from '../components/ui';
 import { Stagger, StaggerItem } from '../components/motion';
+import { HOVER_LIFT, SPRING } from '../lib/motion';
 import { simulateLoad } from '../lib/api/kernel';
 import { describeError } from '../lib/api/http';
 import { config, isDemo } from '../lib/config';
@@ -76,9 +79,8 @@ export function Federation() {
             failure patterns cross the boundary, never task content.
           </p>
         </div>
-        <button
-          type="button"
-          className="btn btn--warn"
+        <Button
+          className="btn--warn"
           onClick={flashSale}
           disabled={busy || isDemo}
           title={
@@ -87,8 +89,16 @@ export function Federation() {
               : `POST /agents/${targetAgent}/simulate-load on ${config.kernelUrl}`
           }
         >
-          ⚡ {busy ? 'Dispatching…' : 'Simulate flash sale'}
-        </button>
+          <motion.span
+            aria-hidden="true"
+            animate={busy ? { rotate: [0, -12, 12, -8, 8, 0] } : {}}
+            transition={busy ? { duration: 0.5, repeat: Infinity, repeatDelay: 0.3 } : {}}
+            style={{ display: 'inline-block' }}
+          >
+            ⚡
+          </motion.span>{' '}
+          {busy ? 'Dispatching…' : 'Simulate flash sale'}
+        </Button>
       </div>
 
       {error && <Banner tone="danger">{error}</Banner>}
@@ -153,11 +163,19 @@ function SiteCard({ rollup }: { rollup: SiteRollup }) {
   const accent = badges[0].tone;
 
   return (
-    <div
+    <motion.div
       className="card card--xl"
+      layout
+      initial={false}
+      animate={{
+        borderColor: accent === 'accent' ? 'var(--border)' : `var(--${accent})`,
+        borderWidth: accent === 'accent' ? 1 : 1.5,
+      }}
+      whileHover={HOVER_LIFT}
+      transition={SPRING}
       style={{
         flex: '1 1 300px',
-        border: accent === 'accent' ? '1px solid var(--border)' : `1.5px solid var(--${accent})`,
+        borderStyle: 'solid',
         display: 'flex',
         flexDirection: 'column',
         gap: 18,
@@ -184,7 +202,7 @@ function SiteCard({ rollup }: { rollup: SiteRollup }) {
               <span className="row" style={{ gap: 8 }}>
                 <ConcurrencyDots instances={pool.instances.filter((instance) => instance.status !== 'killed')} />
                 <span className="mono" style={{ fontSize: 11, color: 'var(--warn)', fontWeight: 700 }}>
-                  ×{pool.replicas} pods
+                  <AnimatedNumber value={pool.replicas} format={(n) => `×${n} pods`} />
                 </span>
               </span>
             ) : (
@@ -204,7 +222,7 @@ function SiteCard({ rollup }: { rollup: SiteRollup }) {
             ? `Last event ${relativeTime(rollup.site.last_event)}`
             : 'No load event yet'}
       </div>
-    </div>
+    </motion.div>
   );
 }
 

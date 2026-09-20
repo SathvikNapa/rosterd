@@ -19,7 +19,7 @@ import { NavLink, useLocation, useOutlet } from 'react-router-dom';
 import { useLive } from '../lib/live/LiveProvider';
 import type { LiveTransport } from '../lib/live/LiveProvider';
 import { config } from '../lib/config';
-import { SPRING, usePageVariants } from '../lib/motion';
+import { LIVE_PULSE, SPRING, usePageVariants } from '../lib/motion';
 
 const LINKS = [
   { to: '/ingest', label: 'Ingest' },
@@ -104,7 +104,18 @@ export function AppShell() {
           <span
             className={status.tone === 'neutral' ? 'pill' : `pill pill--${status.tone}`}
             title={error ? `${status.title}\n\n${error}` : status.title}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
           >
+            {/* Only the genuinely-live transport gets the heartbeat -- a
+                polling or fallback transport claiming to "pulse" would be
+                dishonest about what it actually is. */}
+            {transport === 'websocket' && (
+              <motion.span
+                aria-hidden="true"
+                animate={LIVE_PULSE}
+                style={{ width: 6, height: 6, borderRadius: '50%', background: 'currentColor', flexShrink: 0 }}
+              />
+            )}
             {status.label}
           </span>
           <span className="nav__avatar" aria-hidden="true" />

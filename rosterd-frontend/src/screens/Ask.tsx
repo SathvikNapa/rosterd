@@ -10,7 +10,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AnimatePresence, motion } from 'motion/react';
 import { AgentBubble } from '../components/AgentBubble';
-import { Badge, Banner, Criterion, Label } from '../components/ui';
+import { Badge, Banner, Button, Criterion, Label } from '../components/ui';
 import { parseAsk } from '../lib/api/ingestion';
 import { dispatch } from '../lib/api/kernel';
 import { ServiceError, describeError } from '../lib/api/http';
@@ -156,9 +156,7 @@ export function Ask() {
               fontFamily: 'var(--font-sans)',
             }}
           />
-          <button
-            type="button"
-            className="btn"
+          <Button
             style={{ height: 44, padding: '0 22px', borderRadius: 11, flexShrink: 0 }}
             onClick={parse}
             disabled={parsing || !manifestId || isDemo}
@@ -171,7 +169,7 @@ export function Ask() {
             }
           >
             {parsing ? 'Parsing…' : 'Parse →'}
-          </button>
+          </Button>
         </div>
 
         {!manifestId && (
@@ -249,12 +247,12 @@ export function Ask() {
             </div>
 
             <div className="row row--end" style={{ gap: 12, marginTop: 4 }}>
-              <button type="button" className="btn btn--ghost" onClick={() => setEditing((open) => !open)}>
+              <Button className="btn--ghost" onClick={() => setEditing((open) => !open)}>
                 {editing ? 'Done editing' : 'Edit'}
-              </button>
-              <button type="button" className="btn" onClick={doIt} disabled={dispatching || isDemo}>
+              </Button>
+              <Button onClick={doIt} disabled={dispatching || isDemo}>
                 {dispatching ? 'Dispatching…' : 'Do it'}
-              </button>
+              </Button>
               </div>
             </motion.div>
           )}

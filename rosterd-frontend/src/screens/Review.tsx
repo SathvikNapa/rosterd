@@ -7,7 +7,7 @@
  */
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Badge, Banner, Empty } from '../components/ui';
+import { Badge, Banner, Button, Empty } from '../components/ui';
 import { StaggerBody, StaggerTr } from '../components/motion';
 import { confirmManifest } from '../lib/api/ingestion';
 import { describeError } from '../lib/api/http';
@@ -196,12 +196,10 @@ export function Review() {
           Confirming writes a new confirmed manifest; kernels pick it up on their next poll.
         </div>
         <div className="row" style={{ gap: 12 }}>
-          <button type="button" className="btn btn--ghost" onClick={() => navigate('/ingest')}>
+          <Button className="btn--ghost" onClick={() => navigate('/ingest')}>
             Back
-          </button>
-          <button
-            type="button"
-            className="btn"
+          </Button>
+          <Button
             onClick={confirm}
             disabled={busy || isDemo || confirmed || !manifest}
             title={
@@ -213,7 +211,7 @@ export function Review() {
             }
           >
             {busy ? 'Confirming…' : confirmed ? 'Already live' : 'Confirm and go live'}
-          </button>
+          </Button>
         </div>
       </div>
     </main>

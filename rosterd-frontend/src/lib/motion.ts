@@ -20,7 +20,7 @@
  * where snapping to the target is the right reduced-motion behaviour.
  */
 import { stagger, useReducedMotion } from 'motion/react';
-import type { Transition, Variants } from 'motion/react';
+import type { TargetAndTransition, Transition, Variants } from 'motion/react';
 
 /** The frames' own easing — matches --ease-out in tokens.css. */
 export const EASE_OUT = [0.22, 1, 0.36, 1] as const;
@@ -30,6 +30,24 @@ export const SPRING: Transition = { type: 'spring', stiffness: 420, damping: 36,
 
 /** A pop with a little overshoot, for a value changing in place. */
 export const POP: Transition = { type: 'spring', stiffness: 600, damping: 18, mass: 0.7 };
+
+/** Snappier and stiffer: for a press, not a settle -- whileTap on buttons/cards. */
+export const PRESS: Transition = { type: 'spring', stiffness: 700, damping: 30, mass: 0.5 };
+
+/** The lift a clickable surface gets on hover -- same shape everywhere, so a
+ * button, a card, and a row all feel like one design language, not three. */
+export const HOVER_LIFT = { y: -2, transition: SPRING } as const;
+export const TAP_PRESS = { scale: 0.97, y: 0, transition: PRESS } as const;
+
+/** A slow, steady breathing loop for "this is genuinely live" indicators
+ * (the nav pill's dot, a working-status badge). Deliberately gentle --
+ * this runs indefinitely in the corner of the screen, so it has to be
+ * calm, not attention-grabbing. */
+export const LIVE_PULSE: TargetAndTransition = {
+  scale: [1, 1.35, 1],
+  opacity: [0.55, 1, 0.55],
+  transition: { duration: 1.8, repeat: Infinity, ease: 'easeInOut' },
+};
 
 /**
  * Screen-to-screen. Exit is faster than enter: the outgoing screen should

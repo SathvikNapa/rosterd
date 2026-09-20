@@ -11,11 +11,15 @@
  * is already computed and stored on each row — this shows the inputs next to
  * it rather than recomputing the answer.
  */
+import { motion, useReducedMotion } from 'motion/react';
 import { useMemo } from 'react';
+import type { ReactNode } from 'react';
+import { AnimatedNumber } from '../components/AnimatedNumber';
 import { Badge, Banner, Empty, Label } from '../components/ui';
 import { Stagger, StaggerItem } from '../components/motion';
 import { config } from '../lib/config';
 import { relativeTime } from '../lib/format';
+import { EASE_OUT } from '../lib/motion';
 import { useLive } from '../lib/live/LiveProvider';
 import { agentDisplayName, latestMetricsBySite, metricsSeries, scalerReadout } from '../lib/selectors';
 import type { AgentMetricsRow } from '../lib/types';
@@ -103,7 +107,14 @@ function MonitorCard({ row, name, series }: { row: AgentMetricsRow; name: string
         <Stat label="In flight" value={row.in_flight_count} />
         <Stat label="Queued" value={row.queued_count} />
         <Stat label="Target concurrency" value={row.target_concurrency} />
-        <Stat label="Replicas" value={`${row.current_replicas} / ${row.max_replicas}`} />
+        <Stat
+          label="Replicas"
+          value={
+            <>
+              <AnimatedNumber value={row.current_replicas} /> / {row.max_replicas}
+            </>
+          }
+        />
         <Stat label="Min – max" value={`${row.min_replicas} – ${row.max_replicas}`} />
       </div>
     </div>
@@ -127,12 +138,12 @@ function LegendSwatch({ color, label, dashed }: { color: string; label: string; 
   );
 }
 
-function Stat({ label, value }: { label: string; value: number | string }) {
+function Stat({ label, value }: { label: string; value: number | string | ReactNode }) {
   return (
     <div className="col" style={{ gap: 4 }}>
       <Label>{label}</Label>
       <span className="mono" style={{ fontSize: 18, color: 'var(--text-strong)' }}>
-        {value}
+        {typeof value === 'number' ? <AnimatedNumber value={value} /> : value}
       </span>
     </div>
   );
@@ -146,6 +157,7 @@ function Stat({ label, value }: { label: string; value: number | string }) {
 function Sparkline({ series }: { series: AgentMetricsRow[] }) {
   const width = 640;
   const height = 96;
+  const reduce = useReducedMotion();
 
   if (series.length < 2) {
     return <Empty>Not enough ticks yet to draw a trend.</Empty>;
@@ -176,9 +188,32 @@ function Sparkline({ series }: { series: AgentMetricsRow[] }) {
       role="img"
       aria-label={`Load and replica count over the last ${series.length} scaler ticks`}
     >
-      <path d={areaPath} fill="var(--chart-load-fill)" />
-      <path d={loadPath} fill="none" stroke="var(--chart-load)" strokeWidth={2} />
-      <path d={replicaPath} fill="none" stroke="var(--chart-replicas)" strokeWidth={2} strokeDasharray="4 3" />
+      <motion.path
+        d={areaPath}
+        fill="var(--chart-load-fill)"
+        initial={reduce ? undefined : { opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ duration: 0.5, delay: 0.3 }}
+      />
+      <motion.path
+        d={loadPath}
+        fill="none"
+        stroke="var(--chart-load)"
+        strokeWidth={2}
+        initial={reduce ? undefined : { pathLength: 0 }}
+        animate={{ pathLength: 1 }}
+        transition={{ duration: 0.7, ease: EASE_OUT }}
+      />
+      <motion.path
+        d={replicaPath}
+        fill="none"
+        stroke="var(--chart-replicas)"
+        strokeWidth={2}
+        strokeDasharray="4 3"
+        initial={reduce ? undefined : { pathLength: 0 }}
+        animate={{ pathLength: 1 }}
+        transition={{ duration: 0.7, delay: 0.15, ease: EASE_OUT }}
+      />
     </svg>
   );
 }

@@ -7,15 +7,17 @@
  * the same run. The events row is what carries a trace_id in the federated
  * case, so both are checked before deciding there is no trace to link to.
  */
+import { AnimatePresence, motion } from 'motion/react';
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { AgentCard } from '../components/AgentCard';
 import { Stagger } from '../components/motion';
-import { Banner, Label, TraceId, TraceLink } from '../components/ui';
+import { Banner, Button, Label, TraceId, TraceLink } from '../components/ui';
 import { getRun, killRun } from '../lib/api/kernel';
 import { describeError } from '../lib/api/http';
 import { config, isDemo } from '../lib/config';
 import { clockTime, poolStatusLabel, poolTone, relativeTime, titleize } from '../lib/format';
+import { EASE_OUT, LIVE_PULSE, POP } from '../lib/motion';
 import { useLive } from '../lib/live/LiveProvider';
 import { demoRun } from '../lib/live/demo';
 import { orderPools, poolsForSite } from '../lib/selectors';
@@ -196,25 +198,51 @@ export function RunDetail() {
             </div>
           </div>
         ) : (
-          <div className="card row row--between">
+          <motion.div className="card row row--between" layout transition={{ duration: 0.25, ease: EASE_OUT }}>
             <div className="row" style={{ gap: 10 }}>
-              <span aria-hidden="true" style={{ color: statusColor(run?.status), fontSize: 18 }}>
-                {run?.status === 'done' ? '✓' : run?.status === 'killed' ? '✗' : '●'}
-              </span>
-              <span style={{ fontSize: 16, fontWeight: 700, color: statusColor(run?.status) }}>
+              <AnimatePresence mode="wait" initial={false}>
+                <motion.span
+                  key={run?.status ?? 'loading'}
+                  aria-hidden="true"
+                  style={{ color: statusColor(run?.status), fontSize: 18, display: 'inline-block' }}
+                  initial={{ scale: 0.4, opacity: 0 }}
+                  animate={{ scale: 1, opacity: 1 }}
+                  transition={POP}
+                >
+                  {run?.status === 'working' ? (
+                    <motion.span animate={LIVE_PULSE} style={{ display: 'inline-block' }}>
+                      ●
+                    </motion.span>
+                  ) : run?.status === 'done' ? (
+                    '✓'
+                  ) : run?.status === 'killed' ? (
+                    '✗'
+                  ) : (
+                    '●'
+                  )}
+                </motion.span>
+              </AnimatePresence>
+              <motion.span
+                key={run?.status ?? 'loading-label'}
+                layout
+                style={{ fontSize: 16, fontWeight: 700, color: statusColor(run?.status) }}
+                initial={{ opacity: 0, x: -4 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ duration: 0.2 }}
+              >
                 {run ? labelFor(run.status) : 'Loading run…'}
-              </span>
+              </motion.span>
               {run?.ended_at && <span className="muted">finished {relativeTime(run.ended_at)}</span>}
             </div>
             <div className="row" style={{ gap: 12 }}>
               <TraceLink traceId={traceId} />
               {run?.status === 'working' && (
-                <button type="button" className="btn btn--ghost" onClick={kill} disabled={killing || isDemo}>
+                <Button className="btn--ghost" onClick={kill} disabled={killing || isDemo}>
                   {killing ? 'Killing…' : 'Kill run'}
-                </button>
+                </Button>
               )}
             </div>
-          </div>
+          </motion.div>
         )}
 
         <Link to="/roster" className="linkish" style={{ alignSelf: 'flex-start' }}>

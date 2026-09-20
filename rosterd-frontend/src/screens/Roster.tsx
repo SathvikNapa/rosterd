@@ -10,12 +10,14 @@
  * kernel and keeps the commitment in session state, merged with any live
  * `tasks` rows that do appear. Live rows win on id collision.
  */
+import { AnimatePresence, motion } from 'motion/react';
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AgentBubble } from '../components/AgentBubble';
 import { AgentCard } from '../components/AgentCard';
 import { Stagger } from '../components/motion';
-import { Badge, Banner, Criterion, Label } from '../components/ui';
+import { Badge, Banner, Button, Criterion, Label } from '../components/ui';
+import { EASE_OUT, POP, SPRING, TAP_PRESS } from '../lib/motion';
 import { dispatch } from '../lib/api/kernel';
 import { describeError } from '../lib/api/http';
 import { config, isDemo } from '../lib/config';
@@ -124,32 +126,50 @@ export function Roster() {
       <section style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 20 }}>
         <div className="row row--between">
           <h2 style={{ margin: 0, fontSize: 21, fontWeight: 700, color: 'var(--text-strong)' }}>Schedule a task</h2>
-          <button type="button" className="btn" onClick={newTask}>
-            + New task
-          </button>
+          <Button onClick={newTask}>+ New task</Button>
         </div>
 
         <div className="row" style={{ gap: 8 }}>
           {DAYS.map((label) => {
             const active = label === day;
             return (
-              <button
+              <motion.button
                 key={label}
                 type="button"
                 onClick={() => setDay(label)}
+                whileHover={active ? undefined : { y: -1 }}
+                whileTap={TAP_PRESS}
+                transition={SPRING}
                 style={{
+                  position: 'relative',
                   padding: '6px 16px',
                   borderRadius: 'var(--r-sm)',
                   border: active ? 'none' : '1px solid var(--border)',
-                  background: active ? 'var(--accent-soft)' : 'var(--surface)',
+                  background: active ? undefined : 'var(--surface)',
                   color: active ? 'var(--accent-dark)' : 'var(--text-muted)',
                   fontSize: 13,
                   fontWeight: active ? 600 : 400,
                   cursor: 'pointer',
                 }}
               >
-                {label}
-              </button>
+                {/* A single shared element sliding between days, same trick as
+                    AppShell's nav chip -- reads as "the selection moved", not
+                    "a new thing got highlighted". */}
+                {active && (
+                  <motion.span
+                    layoutId="roster-day-chip"
+                    transition={SPRING}
+                    style={{
+                      position: 'absolute',
+                      inset: 0,
+                      background: 'var(--accent-soft)',
+                      borderRadius: 'var(--r-sm)',
+                      zIndex: 0,
+                    }}
+                  />
+                )}
+                <span style={{ position: 'relative', zIndex: 1 }}>{label}</span>
+              </motion.button>
             );
           })}
         </div>
@@ -185,20 +205,29 @@ export function Roster() {
               const done = task.status === 'done';
               const killed = task.status === 'killed';
               return (
-                <button
+                <motion.button
                   key={task.task_id}
                   type="button"
+                  layout
                   onClick={() => {
                     setDraft(null);
                     setSelectedId(task.task_id);
                   }}
+                  initial={{ opacity: 0, scale: 0.9 }}
+                  animate={{
+                    opacity: 1,
+                    scale: 1,
+                    height: isSelected ? 44 : 36,
+                    background: isSelected ? 'var(--surface)' : killed ? 'var(--danger-soft)' : 'var(--accent-soft)',
+                  }}
+                  whileHover={{ y: -1 }}
+                  whileTap={TAP_PRESS}
+                  transition={SPRING}
                   style={{
                     position: 'absolute',
                     top,
                     left: 76,
                     right: 20,
-                    height: isSelected ? 44 : 36,
-                    background: isSelected ? 'var(--surface)' : killed ? 'var(--danger-soft)' : 'var(--accent-soft)',
                     border: isSelected
                       ? '1.5px solid var(--accent)'
                       : killed
@@ -248,7 +277,7 @@ export function Roster() {
                   <span style={{ marginLeft: 'auto', fontSize: 11, color: statusColor(task.status), fontWeight: 600 }}>
                     {done ? '✓ Done' : killed ? '✗ Killed' : isSelected ? 'Selected' : capitalize(task.status)}
                   </span>
-                </button>
+                </motion.button>
               );
             })}
 
@@ -271,6 +300,15 @@ export function Roster() {
         </div>
 
         <div className="card" style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 18 }}>
+          <AnimatePresence mode="wait" initial={false}>
+          <motion.div
+            key={draft ? 'draft' : (selected?.task_id ?? 'empty')}
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2, ease: EASE_OUT }}
+            style={{ display: 'flex', flexDirection: 'column', gap: 18, flex: 1 }}
+          >
           {selected ? (
             <>
               <div>
@@ -405,12 +443,12 @@ export function Roster() {
               <div className="row row--end" style={{ gap: 12, marginTop: 'auto' }}>
                 {draft ? (
                   <>
-                    <button type="button" className="btn btn--ghost" onClick={() => setDraft(null)}>
+                    <Button className="btn--ghost" onClick={() => setDraft(null)}>
                       Cancel
-                    </button>
-                    <button type="button" className="btn" onClick={schedule} disabled={busy || isDemo}>
+                    </Button>
+                    <Button onClick={schedule} disabled={busy || isDemo}>
                       {busy ? 'Dispatching…' : 'Schedule task'}
-                    </button>
+                    </Button>
                   </>
                 ) : (
                   <span className="muted">
@@ -422,6 +460,8 @@ export function Roster() {
           ) : (
             <div className="empty">Select a task, or start a new one.</div>
           )}
+          </motion.div>
+          </AnimatePresence>
         </div>
       </section>
 
@@ -479,38 +519,49 @@ function AddAssignee({
 
   if (!open) {
     return (
-      <button type="button" className="btn btn--dashed" onClick={() => setOpen(true)}>
+      <Button className="btn--dashed" onClick={() => setOpen(true)}>
         + Add assignee
-      </button>
+      </Button>
     );
   }
 
   return (
-    <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
-      {available.map((option) => (
-        <button
+    <motion.div
+      className="row"
+      style={{ gap: 8, flexWrap: 'wrap' }}
+      initial={{ opacity: 0, height: 0 }}
+      animate={{ opacity: 1, height: 'auto' }}
+      transition={SPRING}
+    >
+      {available.map((option, index) => (
+        <motion.div
           key={option.id}
-          type="button"
-          className="btn btn--dashed"
-          disabled={!option.assignable}
-          title={
-            option.assignable
-              ? undefined
-              : `Not directly assignable — entry only via ${option.via.join(', ') || 'another agent'}`
-          }
-          onClick={() => {
-            onAdd(option.id);
-            setOpen(false);
-          }}
+          initial={{ opacity: 0, scale: 0.85 }}
+          animate={{ opacity: 1, scale: 1 }}
+          transition={{ ...POP, delay: index * 0.03 }}
         >
-          {option.assignable ? titleize(option.id) : `🔒 ${titleize(option.id)}`}
-        </button>
+          <Button
+            className="btn--dashed"
+            disabled={!option.assignable}
+            title={
+              option.assignable
+                ? undefined
+                : `Not directly assignable — entry only via ${option.via.join(', ') || 'another agent'}`
+            }
+            onClick={() => {
+              onAdd(option.id);
+              setOpen(false);
+            }}
+          >
+            {option.assignable ? titleize(option.id) : `🔒 ${titleize(option.id)}`}
+          </Button>
+        </motion.div>
       ))}
       {available.length === 0 && <span className="muted">Every agent is already assigned.</span>}
       <button type="button" className="linkish" onClick={() => setOpen(false)}>
         cancel
       </button>
-    </div>
+    </motion.div>
   );
 }
 
