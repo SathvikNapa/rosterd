@@ -61,7 +61,16 @@ class SimulatedDockerBackend:
         return AgentInstance(
             instance_id=instance_id,
             agent_id=agent_id,
-            container_name=f"rosterd-sim-{self._settings.site_id}-{agent_id}-{n}",
+            # No "rosterd-"/"sim-" prefix here on purpose, unlike instance_id
+            # above -- this is the display name a person actually reads (the
+            # agents table's container_name column), and "fake"/"sim" baked
+            # into it read like the AGENT was fake, not just the pool
+            # bookkeeping underneath it (see docker_backend.py's own module
+            # docstring on that distinction). site_id/agent_id/n is already
+            # unique among simulated instances without a mode marker; a real
+            # Docker container name still gets one below, where it's a
+            # genuine host-level namespace, not just a display string.
+            container_name=f"{self._settings.site_id}-{agent_id}-{n}",
             status=InstanceStatus.idle,
             started_at=datetime.now(timezone.utc),
         )
