@@ -29,16 +29,25 @@ from datetime import datetime, timezone
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
-from broadcaster import PolicyBroadcaster
-from config import Settings, get_settings
-from coordinator import EventLogEntry, EventRequest, EventResponse, PolicyPushRequest, PolicyUpdate, SiteSummary
-from patterns import PatternDetector
 from pydantic import BaseModel
-from sites import SiteRegistry
-from spacetime import SpacetimeWriter, build_spacetime_writer
-from store import EventStore
-from sweeper import OfflineSweeper
-from tracing import Telemetry
+
+from adapters.http_out.broadcaster import PolicyBroadcaster
+from adapters.observability.tracing import Telemetry
+from adapters.spacetime.spacetime import build_spacetime_writer
+from application.sweeper import OfflineSweeper
+from config import Settings, get_settings
+from domain.coordinator import (
+    EventLogEntry,
+    EventRequest,
+    EventResponse,
+    PolicyPushRequest,
+    PolicyUpdate,
+    SiteSummary,
+)
+from domain.patterns import PatternDetector
+from domain.ports import SpacetimeWriter
+from domain.sites import SiteRegistry
+from domain.store import EventStore
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 logger = logging.getLogger("rosterd.coordinator.app")

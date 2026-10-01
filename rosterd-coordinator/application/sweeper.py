@@ -10,8 +10,8 @@ from __future__ import annotations
 import logging
 import threading
 
-from sites import SiteRegistry
-from spacetime import SpacetimeWriter
+from domain.sites import SiteRegistry
+from domain.ports import SpacetimeWriter
 
 logger = logging.getLogger("rosterd.coordinator.sweeper")
 

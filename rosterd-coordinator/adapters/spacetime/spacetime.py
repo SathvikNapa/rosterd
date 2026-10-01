@@ -27,12 +27,13 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
-from typing import Any, Protocol
+from typing import Any
 
 import httpx
 from pydantic import BaseModel
 
-from coordinator import EventLogEntry, SiteSummary
+from domain.coordinator import EventLogEntry, SiteSummary
+from domain.ports import SpacetimeWriter
 
 logger = logging.getLogger("rosterd.coordinator.spacetime")
 
@@ -57,12 +58,6 @@ class TaskRow(BaseModel):
     priority: str
     source: str | None = None
     created_at: datetime
-
-
-class SpacetimeWriter(Protocol):
-    def write_site(self, row: SiteSummary) -> None: ...
-
-    def write_event(self, row: EventLogEntry) -> None: ...
 
 
 class LoggingSpacetimeWriter:

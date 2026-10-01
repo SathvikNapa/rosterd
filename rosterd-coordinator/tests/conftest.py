@@ -10,8 +10,8 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-from app import build_container, create_app
 from config import Settings
+from main import build_container, create_app
 
 
 def make_settings(**overrides) -> Settings:

@@ -180,15 +180,22 @@ Same spirit as `rosterd-ingestion` and `rosterd-kernel`'s own READMEs:
 
 ## Layout
 
+Hexagonal: `domain/` (pure logic + wire contracts + `ports.py`) →
+`application/` (orchestration, depends on ports) → `adapters/` (concrete
+implementations) → `main.py` (thin entrypoint). See the root README's
+"Architecture" section for the convention every rosterd service shares.
+
 | File | Purpose |
 | --- | --- |
-| `shared.py`, `coordinator.py` | Wire contract, verbatim from the brief |
-| `sites.py` | Per-site status/score derivation (`SiteRegistry`) |
-| `patterns.py` | Shared-failure-pattern detection + rule parsing/tightening (`PatternDetector`) |
-| `broadcaster.py` | Fans a policy update out to every known kernel (`PolicyBroadcaster`) |
-| `store.py` | Bounded in-memory event log backing `GET /events` |
-| `sweeper.py` | Background thread keeping the SpacetimeDB `sites` rows current for silent sites |
-| `spacetime.py` | `SiteSummary`/`EventLogEntry` writer (logs, or calls the real `rosterd` module's HTTP reducer API) |
-| `tracing.py` | OTel wrapper -- degrades to a no-op if the SDK/collector isn't there; adds context *extraction* over the kernel's inject-only version |
-| `app.py` | FastAPI wiring -- `create_app()` factory + the `Container` composition root |
+| `domain/coordinator.py` | Wire contract (shared types now come from `rosterd-contracts`, see `libs/rosterd-contracts/`) |
+| `domain/sites.py` | Per-site status/score derivation (`SiteRegistry`) |
+| `domain/patterns.py` | Shared-failure-pattern detection + rule parsing/tightening (`PatternDetector`) |
+| `domain/store.py` | Bounded in-memory event log backing `GET /events` |
+| `domain/ports.py` | The `SpacetimeWriter` Protocol application code depends on |
+| `application/sweeper.py` | Background thread keeping the SpacetimeDB `sites` rows current for silent sites |
+| `adapters/http_out/broadcaster.py` | Fans a policy update out to every known kernel (`PolicyBroadcaster`) |
+| `adapters/spacetime/spacetime.py` | `SpacetimeWriter` implementations (logs, or calls the real `rosterd` module's HTTP reducer API) |
+| `adapters/observability/tracing.py` | OTel wrapper -- degrades to a no-op if the SDK/collector isn't there; adds context *extraction* over the kernel's inject-only version |
+| `adapters/http_in/app.py` | FastAPI wiring -- `create_app()` factory + the `Container` composition root |
+| `main.py` | Thin entrypoint (`uvicorn main:app`) |
 | `docs/API.md` | curl-able examples for every endpoint |

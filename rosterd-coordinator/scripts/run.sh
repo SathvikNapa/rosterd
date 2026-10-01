@@ -10,4 +10,4 @@ if [ ! -d .venv ]; then
   .venv/bin/pip install -q -r requirements.txt
 fi
 
-exec .venv/bin/uvicorn app:app --host 0.0.0.0 --port "${PORT:-8300}" --reload
+exec .venv/bin/uvicorn main:app --host 0.0.0.0 --port "${PORT:-8300}" --reload

@@ -17,8 +17,8 @@ from types import SimpleNamespace
 import httpx
 import pytest
 
-from coordinator import EventLogEntry, SiteSummary
-from spacetime import HttpReducerSpacetimeWriter, _wrap_option
+from domain.coordinator import EventLogEntry, SiteSummary
+from adapters.spacetime.spacetime import HttpReducerSpacetimeWriter, _wrap_option
 
 
 def _settings(**overrides) -> SimpleNamespace:
@@ -48,7 +48,7 @@ def transport(monkeypatch: pytest.MonkeyPatch) -> _RecordingTransport:
         request = httpx.Request("POST", url, json=json, headers=headers)
         return recorder.handle_request(request)
 
-    monkeypatch.setattr("spacetime.httpx.post", fake_post)
+    monkeypatch.setattr("adapters.spacetime.spacetime.httpx.post", fake_post)
     return recorder
 
 
@@ -138,7 +138,7 @@ def test_a_spacetimedb_outage_does_not_raise(monkeypatch: pytest.MonkeyPatch) ->
     def raising_post(*args, **kwargs):
         raise httpx.ConnectError("connection refused")
 
-    monkeypatch.setattr("spacetime.httpx.post", raising_post)
+    monkeypatch.setattr("adapters.spacetime.spacetime.httpx.post", raising_post)
     writer = HttpReducerSpacetimeWriter(_settings())
     row = SiteSummary(site_id="site-a", status="healthy", last_event=None, score=1.0)
 

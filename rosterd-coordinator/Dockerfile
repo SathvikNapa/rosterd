@@ -11,4 +11,4 @@ COPY . .
 ENV PORT=8300
 EXPOSE 8300
 
-CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8300"]
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8300"]

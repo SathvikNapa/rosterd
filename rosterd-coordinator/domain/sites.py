@@ -23,7 +23,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
-from coordinator import EventRequest, SiteSummary
+from domain.coordinator import EventRequest, SiteSummary
 from rosterd_contracts import RunStatus, SiteStatus
 
 
