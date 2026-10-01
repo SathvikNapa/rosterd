@@ -22,19 +22,37 @@ a Postgres outage means no live updates, not a crashed coordinator (the
 listen loop retries every 2s rather than giving up); a browser that's gone
 away just gets dropped from the broadcast set instead of blocking everyone
 else.
+
+NOTIFY only ever fires on a *change* -- a client that connects after
+`agents` already has rows would otherwise see nothing until the next
+write. So `handle()` sends one `{"type": "snapshot", ...}` message per
+table immediately on connect (a plain `SELECT *`, off the request/response
+path, no different from the dashboards every other service already
+exposes), then switches to `{"type": "live", ...}` messages as NOTIFYs
+arrive. The frontend applies a snapshot as a full replace and a live
+message as an upsert into the table it names.
 """
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import threading
+from datetime import date, datetime
 
 from fastapi import WebSocket, WebSocketDisconnect
 
 logger = logging.getLogger("rosterd.coordinator.live_ws")
 
-#: Every table rosterd-postgres/schema.sql's trigger fires pg_notify on.
+#: Every table rosterd-postgres/schema.sql's trigger fires pg_notify on --
+#: also the exact set snapshotted on connect, in this order.
 CHANNELS = ("agents", "agent_metrics", "sites", "events", "tasks", "manifests")
+
+
+def _json_default(value):
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    raise TypeError(f"not JSON-serializable: {value!r}")
 
 
 class LiveRelay:
@@ -84,9 +102,10 @@ class LiveRelay:
 
     async def _broadcast(self, channel: str, payload: str) -> None:
         # `payload` is already a valid JSON object (schema.sql's trigger
-        # builds it with row_to_json(NEW)::text) -- splicing it in directly
-        # avoids a pointless parse-then-reserialize round trip.
-        message = f'{{"table": "{channel}", "row": {payload}}}'
+        # builds it with row_to_json(NEW)::text) -- splicing it into a
+        # literal `row` field avoids a pointless parse-then-reserialize
+        # round trip on the hot path.
+        message = f'{{"type": "live", "table": "{channel}", "row": {payload}}}'
         dead: set[WebSocket] = set()
         for client in self._clients:
             try:
@@ -95,8 +114,32 @@ class LiveRelay:
                 dead.add(client)
         self._clients -= dead
 
+    def _fetch_snapshot(self) -> dict[str, list[dict]]:
+        import psycopg
+        from psycopg.rows import dict_row
+
+        with psycopg.connect(self._dsn, autocommit=True, row_factory=dict_row) as conn:
+            snapshot: dict[str, list[dict]] = {}
+            for table in CHANNELS:
+                with conn.cursor() as cur:
+                    cur.execute(f"SELECT * FROM {table}")
+                    snapshot[table] = cur.fetchall()
+            return snapshot
+
+    async def _send_snapshot(self, websocket: WebSocket) -> None:
+        if not self._dsn:
+            return
+        try:
+            snapshot = await asyncio.to_thread(self._fetch_snapshot)
+        except Exception:  # noqa: BLE001 - best-effort, see module docstring
+            logger.warning("live_ws snapshot fetch failed (continuing with live updates only)", exc_info=True)
+            return
+        for table, rows in snapshot.items():
+            await websocket.send_text(json.dumps({"type": "snapshot", "table": table, "rows": rows}, default=_json_default))
+
     async def handle(self, websocket: WebSocket) -> None:
         await websocket.accept()
+        await self._send_snapshot(websocket)
         self._clients.add(websocket)
         try:
             while True:
