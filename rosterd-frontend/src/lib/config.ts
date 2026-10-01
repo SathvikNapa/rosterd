@@ -1,7 +1,6 @@
 /**
  * Every service URL in one place. Defaults match docker-compose.yml plus
- * ingestion's ./scripts/run.sh (ingestion is not in compose yet — see
- * TeamPieces/rosterd-param-frontend.md "What's running").
+ * ingestion's ./scripts/run.sh (ingestion is not wired into compose yet).
  */
 
 const env = import.meta.env;

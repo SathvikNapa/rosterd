@@ -2,7 +2,7 @@
 
 The control plane UI: ingest a repo, review what was inferred from it, confirm it, ask for work in plain language, and watch the kernel enforce the contract across federated sites.
 
-Built from the seven frames in `TeamPieces/Design.html` against the services that actually exist today (`rosterd-param-frontend.md` is the source of truth for what's really there; `rosterd-joy-coordinator-frontend.md` for what each screen is *for*).
+Built from the original seven-frame design mockup against the services that actually exist today.
 
 ```bash
 npm install
