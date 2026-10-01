@@ -58,6 +58,42 @@ from tracing import mark_violation
 
 logger = logging.getLogger("rosterd.kernel.dispatch")
 
+#: What `toolrun.attempt_tool` (rosterd-demo-agent) writes into a
+#: `tool_calls[].result` when the args it was actually given fail the
+#: tool's own Pydantic schema (e.g. a negative qty, once a lower bound
+#: exists) -- distinct from a kernel-side manifest-rule violation, which
+#: kills the run. This one doesn't kill anything: the graph still finished
+#: normally, it just tried an invalid value. Kept a string match rather
+#: than a typed field because InvokeResponse/ToolCall (demo_agent_client.py)
+#: are the wire contract every agent's own service returns verbatim --
+#: widening that schema for one kernel-side concern isn't this repo's call.
+_SCHEMA_REJECTED_PREFIX = "REJECTED by tool schema:"
+
+
+def _with_rejection_notice(response: InvokeResponse) -> str:
+    """`response.output` plus one `REJECTED:` line per schema-rejected tool
+    call, in the same convention refund_node.py's prompt-injection markers
+    use (`INJECTED:`/`INJECTION:`) -- a plain-text prefix the frontend
+    already knows how to pull out into its own callout (RunDetail.tsx).
+
+    Without this, a schema rejection was real and tested
+    (test_payment_over_cap_is_recorded_intact_and_rejected_by_schema) but
+    invisible end to end: `tool_calls[].result` never leaves the kernel --
+    RunResponse only carries `output` -- so nobody dispatching from the
+    actual UI ever saw it, they'd just see a run marked "done" with no clue
+    anything was wrong. This is what gives the person a chance to notice
+    and correct their message instead of a silent no-op.
+    """
+    notices = [
+        f"REJECTED: {call.tool} rejected {call.args} -- {call.result.split(_SCHEMA_REJECTED_PREFIX, 1)[1].strip()}. "
+        "Try rephrasing your request with a valid value."
+        for call in response.tool_calls
+        if call.result and call.result.startswith(_SCHEMA_REJECTED_PREFIX)
+    ]
+    if not notices:
+        return response.output
+    return "\n".join([response.output, *notices]) if response.output else "\n".join(notices)
+
 
 class Dispatcher:
     def __init__(
@@ -300,7 +336,9 @@ class Dispatcher:
 
         self._registry.set_status(agent_id, instance.instance_id, InstanceStatus.idle)
         trace_id = self._telemetry.current_trace_id()
-        self._run_store.finish(run_id, status=RunStatus.done, output=response.output, trace_id=trace_id)
+        self._run_store.finish(
+            run_id, status=RunStatus.done, output=_with_rejection_notice(response), trace_id=trace_id
+        )
         self._coordinator_client.post_event(
             EventRequest(
                 site_id=self._settings.site_id,
