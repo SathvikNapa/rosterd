@@ -53,7 +53,7 @@ from policy import PolicyStore
 from registry import InstanceRegistry
 from run_store import RunStore
 from rosterd_contracts import RunStatus, Violation
-from spacetime import AgentRow, SpacetimeWriter
+from postgres import AgentRow, StateWriter
 from tracing import mark_violation
 
 logger = logging.getLogger("rosterd.kernel.dispatch")
@@ -109,7 +109,7 @@ class Dispatcher:
         run_store: RunStore,
         telemetry,
         policy_store: PolicyStore,
-        spacetime_writer: SpacetimeWriter,
+        state_writer: StateWriter,
     ) -> None:
         self._settings = settings
         self._manifest_index = manifest_index
@@ -121,7 +121,7 @@ class Dispatcher:
         self._run_store = run_store
         self._telemetry = telemetry
         self._policy_store = policy_store
-        self._spacetime_writer = spacetime_writer
+        self._state_writer = state_writer
 
     # ------------------------------------------------------------- public
 
@@ -200,7 +200,7 @@ class Dispatcher:
             logger.exception("failed to start instance for %s during dispatch", agent_id)
             return None
         self._registry.add(instance)
-        self._spacetime_writer.write_agent(
+        self._state_writer.write_agent(
             AgentRow(
                 site_id=self._settings.site_id,
                 agent_id=agent_id,
@@ -434,7 +434,7 @@ class Dispatcher:
             reason=violation.rule if violation else (reason or "manual_kill"),
             registry=self._registry,
             docker_backend=self._docker_backend,
-            spacetime_writer=self._spacetime_writer,
+            state_writer=self._state_writer,
             settings=self._settings,
         )
         if violation is not None:

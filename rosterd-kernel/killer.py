@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 from docker_backend import DockerBackend
 from kernel import AgentInstance
 from registry import InstanceRegistry
-from spacetime import AgentRow, SpacetimeWriter
+from postgres import AgentRow, StateWriter
 
 logger = logging.getLogger("rosterd.kernel.killer")
 
@@ -29,7 +29,7 @@ def kill(
     reason: str,
     registry: InstanceRegistry,
     docker_backend: DockerBackend,
-    spacetime_writer: SpacetimeWriter,
+    state_writer: StateWriter,
     settings,
 ) -> None:
     registry.remove(instance.agent_id, instance.instance_id)
@@ -38,7 +38,7 @@ def kill(
     except Exception:  # noqa: BLE001 - the row still needs to be marked killed either way
         logger.exception("docker kill failed for instance=%s reason=%s", instance.instance_id, reason)
 
-    spacetime_writer.write_agent(
+    state_writer.write_agent(
         AgentRow(
             site_id=settings.site_id,
             agent_id=instance.agent_id,

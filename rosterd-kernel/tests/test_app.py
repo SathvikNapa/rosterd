@@ -1,6 +1,6 @@
 """End-to-end HTTP contract tests against a real FastAPI app wired to a
 fake docker backend and a monkeypatched demo-agent HTTP call. No Docker
-daemon, no live ingestion/coordinator/SpacetimeDB required.
+daemon, no live ingestion/coordinator/Postgres required.
 """
 from __future__ import annotations
 

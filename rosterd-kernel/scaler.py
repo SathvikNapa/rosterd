@@ -23,7 +23,7 @@ from coordinator_client import CoordinatorClient, EventRequest
 from killer import kill as kill_instance
 from manifest import ManifestIndex, ScalingPolicy
 from registry import InstanceRegistry
-from spacetime import AgentMetricsRow, AgentRow, SpacetimeWriter
+from postgres import AgentMetricsRow, AgentRow, StateWriter
 
 logger = logging.getLogger("rosterd.kernel.scaler")
 
@@ -42,7 +42,7 @@ class ScalerLoop:
         manifest_index: ManifestIndex,
         registry: InstanceRegistry,
         docker_backend,
-        spacetime_writer: SpacetimeWriter,
+        state_writer: StateWriter,
         coordinator_client: CoordinatorClient,
         budget_tracker,
         telemetry,
@@ -51,7 +51,7 @@ class ScalerLoop:
         self._manifest_index = manifest_index
         self._registry = registry
         self._docker_backend = docker_backend
-        self._spacetime_writer = spacetime_writer
+        self._state_writer = state_writer
         self._coordinator_client = coordinator_client
         self._budget_tracker = budget_tracker
         self._telemetry = telemetry
@@ -80,7 +80,7 @@ class ScalerLoop:
             logger.exception("failed to start instance for %s", agent_id)
             return False
         self._registry.add(instance)
-        self._spacetime_writer.write_agent(
+        self._state_writer.write_agent(
             AgentRow(
                 site_id=self._settings.site_id,
                 agent_id=agent_id,
@@ -131,13 +131,13 @@ class ScalerLoop:
                         reason="scale_down_idle",
                         registry=self._registry,
                         docker_backend=self._docker_backend,
-                        spacetime_writer=self._spacetime_writer,
+                        state_writer=self._state_writer,
                         settings=self._settings,
                     )
                     changed = True
 
             final_current = self._registry.current_replicas(agent_id)
-            self._spacetime_writer.write_agent_metrics(
+            self._state_writer.write_agent_metrics(
                 AgentMetricsRow(
                     site_id=self._settings.site_id,
                     agent_id=agent_id,

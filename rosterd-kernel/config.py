@@ -70,14 +70,14 @@ class Settings:
 
     # ---- manifest subscription -------------------------------------------------
     #: Ingestion service base URL, polled for the confirmed manifest. Stands
-    #: in for a real SpacetimeDB `manifests` subscription -- see
+    #: in for a real Postgres `manifests` subscription -- see
     #: manifest_source.py's docstring for why.
     ingestion_url: str = field(
         default_factory=lambda: os.environ.get("ROSTERD_KERNEL_INGESTION_URL", "http://localhost:8000")
     )
     #: Which manifest this site's kernel governs. Unset means "no manifest
     #: yet" -- dispatch rejects everything with manifest_not_ready until an
-    #: operator sets this (or wires the real SpacetimeDB subscription).
+    #: operator sets this (or wires the real Postgres subscription).
     manifest_id: str | None = field(
         default_factory=lambda: os.environ.get("ROSTERD_KERNEL_MANIFEST_ID") or None
     )
@@ -105,13 +105,13 @@ class Settings:
     #: original 1->5 fix: fire real concurrent load through
     #: /agents/{id}/simulate-load across multiple agents simultaneously and
     #: watch current_replicas actually climb into double digits in
-    #: SpacetimeDB's agent_metrics, not just past the old ceiling of 5.
+    #: Postgres's agent_metrics, not just past the old ceiling of 5.
     #: Trimmed from 20 to 10 after a real report: the ORIGINAL bottleneck
     #: was scripts/black_friday_load.py's request volume (thousands of
     #: real, near-simultaneous OS threads each holding a live HTTP
     #: connection -- that's what pegged a machine, not this ceiling number
     #: by itself), but a lower ceiling also means less scaler/coordinator/
-    #: SpacetimeDB bookkeeping churn per tick during a scale event, so both
+    #: Postgres bookkeeping churn per tick during a scale event, so both
     #: were turned down together. 10 is still double digits.
     default_min_replicas: int = field(
         default_factory=lambda: _env_int("ROSTERD_KERNEL_DEFAULT_MIN_REPLICAS", 1)
@@ -187,17 +187,12 @@ class Settings:
         default_factory=lambda: _env_float("ROSTERD_KERNEL_COORDINATOR_TIMEOUT_SEC", 5.0)
     )
 
-    # ---- SpacetimeDB -----------------------------------------------------------
-    #: Both unset (the default) means "log every row instead of writing it" --
-    #: see spacetime.py. Set both once Joy's module is up.
-    spacetimedb_url: str | None = field(
-        default_factory=lambda: os.environ.get("ROSTERD_KERNEL_SPACETIMEDB_URL") or None
-    )
-    spacetimedb_module: str | None = field(
-        default_factory=lambda: os.environ.get("ROSTERD_KERNEL_SPACETIMEDB_MODULE") or None
-    )
-    spacetimedb_auth_token: str | None = field(
-        default_factory=lambda: os.environ.get("ROSTERD_KERNEL_SPACETIMEDB_TOKEN") or None
+    # ---- Shared live state (Postgres) -------------------------------------------
+    #: Unset (the default) means "log every row instead of writing it" -- see
+    #: postgres.py. A libpq connection string, e.g.
+    #: postgresql://rosterd:rosterd@localhost:5432/rosterd
+    postgres_dsn: str | None = field(
+        default_factory=lambda: os.environ.get("ROSTERD_KERNEL_POSTGRES_DSN") or None
     )
 
     # ---- Reviewer agent (reviewer.py) ---------------------------------------------

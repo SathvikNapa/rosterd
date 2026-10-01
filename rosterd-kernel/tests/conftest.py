@@ -3,7 +3,7 @@
 Every test builds its own isolated Container (simulated docker backend --
 no real container, but every dispatch still forwards to a real HTTP demo
 agent double via fake_demo_agent below -- plus a StaticManifestSource
-seeded in-process, no live ingestion/coordinator/SpacetimeDB needed) rather
+seeded in-process, no live ingestion/coordinator/Postgres needed) rather
 than sharing one module-level app, since the kernel is stateful across
 requests -- see app.py's module docstring.
 """

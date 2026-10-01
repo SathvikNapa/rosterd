@@ -1,7 +1,7 @@
 """Where the confirmed manifest comes from.
 
 The brief's task is "subscribe to this site's confirmed manifest in
-SpacetimeDB". There is no generated SpacetimeDB subscription client in this
+Postgres". There is no generated Postgres subscription client in this
 repo, so `IngestionPollManifestSource` is the pragmatic stand-in: poll
 Param's `GET /manifest/{manifest_id}` on an interval and validate the body
 against manifest.ManifestDocument. Nothing downstream (dispatch, the

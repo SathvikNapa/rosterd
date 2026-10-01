@@ -9,7 +9,8 @@ scaling metrics the rest of the team's screens are built on.
 frontend ──> kernel-service ──> demo-agent-service × pool (same site only)
                   │
                   ├──> coordinator-service (posts events, receives policy updates)
-                  ├──> SpacetimeDB (writes agents + agent_metrics every tick)
+                  ├──> Postgres (writes agents + agent_metrics every tick; a trigger
+                  │              NOTIFYs rosterd-coordinator's live_ws.py relay)
                   └──> otel-collector ──> Jaeger + metrics backend
 ```
 
@@ -18,16 +19,16 @@ frontend ──> kernel-service ──> demo-agent-service × pool (same site on
 ```bash
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 ./scripts/run.sh                 # serves on :8100, /docs for the API explorer
-.venv/bin/python -m pytest       # 83 tests, no Docker/SpacetimeDB/collector/LLM key needed
+.venv/bin/python -m pytest       # 90 tests, no Docker/Postgres/collector/LLM key needed
 ```
 
-Nothing above needs Docker, SpacetimeDB, Param's ingestion service, or an
-OTel collector running — `ROSTERD_KERNEL_DOCKER_MODE=simulated` (the
-default) simulates the instance *pool* only (no real container is started
-or killed; every dispatch still runs for real against a real demo-agent
-process), SpacetimeDB writes fall back to logging, and OTel setup no-ops if
-the SDK can't reach a collector. Point `GET /health`, `/manifest`, and
-`/dispatch` at it immediately.
+Nothing above needs Docker, Postgres, ingestion, or an OTel collector
+running — `ROSTERD_KERNEL_DOCKER_MODE=simulated` (the default) simulates
+the instance *pool* only (no real container is started or killed; every
+dispatch still runs for real against a real demo-agent process), Postgres
+writes fall back to logging, and OTel setup no-ops if the SDK can't reach
+a collector. Point `GET /health`, `/manifest`, and `/dispatch` at it
+immediately.
 
 Full compose (kernel + otel-collector + Jaeger, plus commented-out slots
 for everyone else's service once it has a Dockerfile) is at the repo root:
@@ -136,7 +137,7 @@ discipline as `rosterd-ingestion`'s own `/healthz` / `/manifests`.
 | `legacy_constraints.py` | Stopgap: adapts ingestion's real dict-shaped `constraints` into `ConstraintRule`s |
 | `manifest_source.py` | Where the manifest comes from — polls ingestion today, see "Notes for the team" |
 | `demo_agent_client.py`, `coordinator_client.py` | Clients for Shruti's `/invoke` and Joy's `/events` |
-| `spacetime.py` | `AgentRow` / `AgentMetricsRow` + the writer (logs, or calls the real `rosterd` module's HTTP reducer API) |
+| `postgres.py` | `AgentRow` / `AgentMetricsRow` + the writer (logs, or upserts/inserts into the real `rosterd-postgres` schema) |
 | `constraints.py` | `evaluate_rule` / `evaluate_all` — the generic field/op/value engine |
 | `budget.py` | Tool-call-count / elapsed-time tracking per `run_id` |
 | `registry.py` | The instance pool (`instances: dict[str, list[AgentInstance]]`) + queue counters |
@@ -181,8 +182,8 @@ A few places where the brief left room for judgment, called out explicitly
   collisions turn out to matter more in practice.
 
 - **Manifest subscription polls ingestion's `GET /manifest/{id}`, not a
-  real SpacetimeDB subscription.** No generated SpacetimeDB client exists
-  in this repo yet. This kernel is built against the *finalized* brief
+  real Postgres LISTEN/NOTIFY subscription.** Nothing in this repo listens
+  for one yet. This kernel is built against the *finalized* brief
   shape (`kernel.py`'s own contract and Param's own brief both describe
   `constraints: list[ConstraintRule]` + `scaling: ScalingPolicy`), while
   ingestion's real, committed `AgentManifestEntry` still carries a
@@ -205,15 +206,17 @@ A few places where the brief left room for judgment, called out explicitly
   see "Verified against the real ingestion service" below), and the
   confirmed one loads and dispatches for real.
 
-- **SpacetimeDB writes go through a hand-rolled HTTP reducer client**
-  (`POST /v1/database/{module}/call/{reducer}`), not generated bindings —
-  none exist in this repo. Unset `ROSTERD_KERNEL_SPACETIMEDB_URL` and the
-  kernel logs every row it would have written instead, so the scaler and
-  kill switch are fully exercised (see the test suite) without a running
-  SpacetimeDB. The real module now exists at `../rosterd-spacetimedb/`
-  (database name `rosterd`) and `docker-compose.yml` points this kernel at
-  it by default — see that module's README for the calling convention
-  (JSON array body, not a bare object) and the "Verified" section below.
+- **Postgres writes are plain `INSERT ... ON CONFLICT DO UPDATE` via
+  psycopg** — no ORM, no generated bindings. Unset
+  `ROSTERD_KERNEL_POSTGRES_DSN` and the kernel logs every row it would
+  have written instead, so the scaler and kill switch are fully exercised
+  (see the test suite) without a running Postgres. The real schema lives
+  at `../rosterd-postgres/schema.sql` and `docker-compose.yml` points this
+  kernel at a real Postgres by default — see the "Verified" section below.
+  Live updates (the frontend's "Live" pill) come from a trigger in that
+  schema firing `pg_notify` on every write, relayed to browsers by
+  `rosterd-coordinator`'s `adapters/http_in/live_ws.py` — this kernel
+  itself has no idea anyone's listening.
 
 - **Kill is lazy about "restart-for-next-dispatch."** There's no separate
   "replace this exact instance" codepath — `killer.kill()` just removes the
@@ -295,19 +298,20 @@ been missed entirely. Fixed, with a regression test
 (`tests/test_tracing_spans.py`) that asserts the actual span names a
 dispatch and a scaler tick request, not just that tracing doesn't crash.
 
-## Verified against the real SpacetimeDB module
+## Verified against a real Postgres
 
-`HttpReducerSpacetimeWriter._call()` originally sent the reducer args as a
-bare JSON object (`json=args`); the real SpacetimeDB HTTP API rejects that
-and requires a JSON array of positional arguments. Found by building
-`../rosterd-spacetimedb/` and round-tripping real calls against it, not by
-reading the docs (the bundled SDK reference doesn't state the HTTP body
-shape at all — only the TypeScript-side reducer signature). Fixed, with a
-regression test (`tests/test_spacetime.py`) that pins the array-wrapped
-body via a mocked transport, and re-verified for real: called
-`HttpReducerSpacetimeWriter.write_agent` / `.write_agent_metrics` directly
-against the actual `docker compose` stack's `spacetimedb` service and
-confirmed both rows landed via `spacetime sql`.
+`rosterd-postgres/schema.sql` was applied to a real `postgres:16-alpine`
+container (not just read for syntax), and `PostgresStateWriter.write_agent`
+/ `.write_agent_metrics` were called directly against it — both rows
+landed, confirmed via `SELECT * FROM agents` / `agent_metrics`. The
+NOTIFY trigger was verified the same way: `LISTEN agents;` in one session,
+an insert and then an upsert-triggering update in another, and both the
+insert and the update each produced an `Asynchronous notification "agents"`
+with the fresh row as JSON — the mechanism `rosterd-coordinator`'s
+`live_ws.py` relay depends on. `tests/test_postgres.py` pins the SQL shape
+(the upsert's `ON CONFLICT (instance_id) DO UPDATE`, the metrics insert's
+lack of one) via a fake connection, for the regression suite; the live
+container round trip above is what a mocked test can't substitute for.
 
 ## Verified against the real demo-agent
 
@@ -326,7 +330,7 @@ dispatched real tasks through the kernel at it end to end.
    **Fixed:** added `"max_qty": LegacyMapping(field="tool_calls[*].args.qty",
    op="lte")`. Re-verified live afterward: the same dispatch now comes back
    `status: killed`, `violation.rule == "tool_calls[*].args.qty lte 50"`,
-   and the event shows up correctly in the coordinator and in SpacetimeDB's
+   and the event shows up correctly in the coordinator and in Postgres's
    `events` table with the violation payload intact. Regression test:
    `tests/test_legacy_constraints.py::test_max_qty_becomes_a_constraint_rule_dict`.
 
