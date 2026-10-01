@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 
 import httpx
 
-from conftest import SpySpacetimeWriter
+from conftest import SpyStateWriter
 
 
 def event(site_id="site-a", status="done", violation=None, run_id="r1"):
@@ -40,9 +40,9 @@ class TestEventsHealthyPath:
         assert sites[0]["status"] == "healthy"
         assert sites[0]["score"] == 1.0
 
-    def test_writes_go_through_to_spacetime(self, client, container):
+    def test_writes_go_through_to_state_writer(self, client, container):
         client.post("/events", json=event(status="done"))
-        writer: SpySpacetimeWriter = container.spacetime_writer
+        writer: SpyStateWriter = container.state_writer
         assert len(writer.sites) == 1
         assert len(writer.events) == 1
 
@@ -121,6 +121,19 @@ class TestDebugEndpoints:
         body = client.get("/healthz").json()
         assert body["status"] == "ok"
         assert body["sites_seen"] == 0
+
+
+class TestLiveWebSocket:
+    """No Postgres configured in tests (settings.postgres_dsn is None), so
+    LiveRelay.start() stays idle -- this just confirms the route itself is
+    wired through the real app and accepts a connection. The relay's actual
+    LISTEN/broadcast mechanics are covered by test_postgres.py's writer
+    tests and were verified separately against a real Postgres container
+    (see rosterd-coordinator/README.md's "Verified")."""
+
+    def test_connects_and_stays_open_until_the_client_disconnects(self, client):
+        with client.websocket_connect("/ws") as ws:
+            ws.close()
 
 
 def _ok_response():

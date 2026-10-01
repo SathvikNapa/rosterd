@@ -1,8 +1,8 @@
 """Per-site health state: `GET /sites` reads straight from here, not from
-SpacetimeDB -- the brief is explicit that `GET /sites` is "mostly for
+Postgres -- the brief is explicit that `GET /sites` is "mostly for
 debugging, frontend subscribes directly" to the `sites` table instead.
-This registry is the coordinator's own source of truth; SpacetimeDB writes
-(via spacetime.py) are a side-channel for that direct subscription, kept in
+This registry is the coordinator's own source of truth; Postgres writes
+(via adapters/postgres/postgres.py) are a side-channel for that direct subscription, kept in
 sync but never read back.
 
 `status` per site:
@@ -85,7 +85,7 @@ class SiteRegistry:
 
     def list_offline(self) -> list[SiteSummary]:
         """Every site whose *computed* status is `offline` right now. Used
-        by the background sweeper to keep the SpacetimeDB `sites` rows for
+        by the background sweeper to keep the Postgres `sites` rows for
         silent sites current even though nothing calls `record_event` for
         them -- a site going dark is exactly the case no incoming request
         would otherwise ever refresh."""

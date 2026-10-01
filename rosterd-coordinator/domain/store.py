@@ -2,8 +2,8 @@
 endpoint (same "additive convenience" spirit as rosterd-ingestion's
 `/manifests` and rosterd-kernel's `/manifest` debug routes -- adds no field
 to any contracted response). The frontend's real activity feed subscribes
-to SpacetimeDB's `events` table directly, per the brief; this is purely for
-poking at the coordinator without a SpacetimeDB module standing behind it.
+to Postgres's `events` table directly, per the brief; this is purely for
+poking at the coordinator without a Postgres module standing behind it.
 """
 from __future__ import annotations
 

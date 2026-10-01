@@ -59,7 +59,7 @@ class Settings:
     site_kernels: dict[str, str] = field(default_factory=lambda: _env_json_dict("ROSTERD_COORDINATOR_SITE_KERNELS"))
 
     #: A site with no event in this long is reported `offline` by GET
-    #: /sites, and (via the background sweeper) gets its SpacetimeDB `sites`
+    #: /sites, and (via the background sweeper) gets its Postgres `sites`
     #: row updated to match even with nobody polling.
     site_offline_after_sec: float = field(
         default_factory=lambda: _env_float("ROSTERD_COORDINATOR_OFFLINE_AFTER_SEC", 30.0)
@@ -93,17 +93,12 @@ class Settings:
 
     push_timeout_sec: float = field(default_factory=lambda: _env_float("ROSTERD_COORDINATOR_PUSH_TIMEOUT_SEC", 5.0))
 
-    # ---- SpacetimeDB -----------------------------------------------------------
-    #: Both unset (the default) means "log every row instead of writing it" --
-    #: see spacetime.py. Set both once Joy's module is up.
-    spacetimedb_url: str | None = field(
-        default_factory=lambda: os.environ.get("ROSTERD_COORDINATOR_SPACETIMEDB_URL") or None
-    )
-    spacetimedb_module: str | None = field(
-        default_factory=lambda: os.environ.get("ROSTERD_COORDINATOR_SPACETIMEDB_MODULE") or None
-    )
-    spacetimedb_auth_token: str | None = field(
-        default_factory=lambda: os.environ.get("ROSTERD_COORDINATOR_SPACETIMEDB_TOKEN") or None
+    # ---- Shared live state (Postgres) -------------------------------------------
+    #: Unset (the default) means "log every row instead of writing it" -- see
+    #: adapters/postgres/postgres.py. A libpq connection string, e.g.
+    #: postgresql://rosterd:rosterd@localhost:5432/rosterd
+    postgres_dsn: str | None = field(
+        default_factory=lambda: os.environ.get("ROSTERD_COORDINATOR_POSTGRES_DSN") or None
     )
 
     # ---- OpenTelemetry -----------------------------------------------------------

@@ -1,7 +1,7 @@
 """Shared fixtures.
 
 Every test builds its own isolated Container (a settings tuned for fast,
-deterministic tests, and a spy SpacetimeWriter recording every write) --
+deterministic tests, and a spy StateWriter recording every write) --
 same reasoning as rosterd-kernel/tests/conftest.py: this service is
 stateful across requests, so nothing is shared module-level.
 """
@@ -30,7 +30,7 @@ def make_settings(**overrides) -> Settings:
     return Settings(**base)
 
 
-class SpySpacetimeWriter:
+class SpyStateWriter:
     def __init__(self) -> None:
         self.sites: list = []
         self.events: list = []
@@ -43,14 +43,14 @@ class SpySpacetimeWriter:
 
 
 @pytest.fixture
-def spy_spacetime():
-    return SpySpacetimeWriter()
+def spy_state_writer():
+    return SpyStateWriter()
 
 
 @pytest.fixture
-def container(spy_spacetime):
+def container(spy_state_writer):
     settings = make_settings()
-    return build_container(settings, spacetime_writer=spy_spacetime)
+    return build_container(settings, state_writer=spy_state_writer)
 
 
 @pytest.fixture

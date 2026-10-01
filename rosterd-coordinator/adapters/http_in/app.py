@@ -10,7 +10,7 @@ Plus small additive debug endpoints, same spirit as the other two
 services' own `/healthz` and debug routes -- none add a field to a
 contracted response.
 
-    GET  /events            recent event log (the frontend subscribes to SpacetimeDB instead)
+    GET  /events            recent event log (the frontend subscribes over the live WebSocket relay instead)
     GET  /healthz            liveness + effective settings
 
 `create_app()` is a factory (not a bare module-level app) for the same
@@ -21,19 +21,21 @@ so tests build their own isolated Container instead of sharing one process
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 
 from pydantic import BaseModel
 
+from adapters.http_in.live_ws import LiveRelay
 from adapters.http_out.broadcaster import PolicyBroadcaster
 from adapters.observability.tracing import Telemetry
-from adapters.spacetime.spacetime import build_spacetime_writer
+from adapters.postgres.postgres import build_state_writer
 from application.sweeper import OfflineSweeper
 from config import Settings, get_settings
 from domain.coordinator import (
@@ -45,7 +47,7 @@ from domain.coordinator import (
     SiteSummary,
 )
 from domain.patterns import PatternDetector
-from domain.ports import SpacetimeWriter
+from domain.ports import StateWriter
 from domain.sites import SiteRegistry
 from domain.store import EventStore
 
@@ -69,20 +71,22 @@ class Container:
     pattern_detector: PatternDetector
     broadcaster: PolicyBroadcaster
     event_store: EventStore
-    spacetime_writer: SpacetimeWriter
+    state_writer: StateWriter
     sweeper: OfflineSweeper
+    live_relay: LiveRelay
 
 
-def build_container(settings: Settings, *, spacetime_writer: SpacetimeWriter | None = None) -> Container:
+def build_container(settings: Settings, *, state_writer: StateWriter | None = None) -> Container:
     telemetry = Telemetry(settings)
     site_registry = SiteRegistry(settings)
     pattern_detector = PatternDetector(settings)
     broadcaster = PolicyBroadcaster(settings, telemetry)
     event_store = EventStore()
-    spacetime_writer = spacetime_writer or build_spacetime_writer(settings)
+    state_writer = state_writer or build_state_writer(settings)
     sweeper = OfflineSweeper(
-        registry=site_registry, spacetime_writer=spacetime_writer, interval_sec=settings.site_offline_sweep_interval_sec
+        registry=site_registry, state_writer=state_writer, interval_sec=settings.site_offline_sweep_interval_sec
     )
+    live_relay = LiveRelay(settings.postgres_dsn)
     return Container(
         settings=settings,
         telemetry=telemetry,
@@ -90,8 +94,9 @@ def build_container(settings: Settings, *, spacetime_writer: SpacetimeWriter | N
         pattern_detector=pattern_detector,
         broadcaster=broadcaster,
         event_store=event_store,
-        spacetime_writer=spacetime_writer,
+        state_writer=state_writer,
         sweeper=sweeper,
+        live_relay=live_relay,
     )
 
 
@@ -102,8 +107,10 @@ def create_app(settings: Settings | None = None, *, container: Container | None 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         container.sweeper.start()
+        container.live_relay.start(asyncio.get_running_loop())
         logger.info("coordinator started: known kernels=%s", list(settings.site_kernels))
         yield
+        container.live_relay.stop()
         container.sweeper.stop()
 
     fastapi_app = FastAPI(
@@ -137,7 +144,7 @@ def create_app(settings: Settings | None = None, *, container: Container | None 
             "handle_event", dict(request.headers), **{"rosterd.site_id": event.site_id, "rosterd.agent_id": event.agent_id}
         ) as span:
             summary = container.site_registry.record_event(event)
-            container.spacetime_writer.write_site(summary)
+            container.state_writer.write_site(summary)
 
             entry = EventLogEntry(
                 site_id=event.site_id,
@@ -148,7 +155,7 @@ def create_app(settings: Settings | None = None, *, container: Container | None 
                 timestamp=event.timestamp,
             )
             container.event_store.append(entry)
-            container.spacetime_writer.write_event(entry)
+            container.state_writer.write_event(entry)
 
             policy_update = None
             if event.violation is not None:
@@ -170,6 +177,14 @@ def create_app(settings: Settings | None = None, *, container: Container | None 
     def post_policy_push(request: PolicyPushRequest) -> PolicyPushResponse:
         pushed = container.broadcaster.push(request.rule, request.value, request.reason)
         return PolicyPushResponse(pushed=pushed)
+
+    # -------------------------------------------------------------- live
+
+    @fastapi_app.websocket("/ws")
+    async def live_ws(websocket: WebSocket) -> None:
+        """What the frontend's lib/live/ connects to instead of a raw
+        Postgres connection -- see adapters/http_in/live_ws.py."""
+        await container.live_relay.handle(websocket)
 
     # ------------------------------------------------------------- debug
 
