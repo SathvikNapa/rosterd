@@ -8,6 +8,11 @@
  * straight out of the code") has to land. An edge draws itself in (a real
  * path-length reveal, not a fade) before its two nodes pop in, so the
  * sequence reads as "the graph is being traced", not "a picture appeared".
+ *
+ * `highlight` (Roster's "Collaboration" card) repurposes the same dimming
+ * this already does on hover, just pinned to a fixed set instead of
+ * recomputed from whichever node the pointer is over -- a task's assignees
+ * light up, everything else fades, with zero new dimming logic.
  */
 import { motion, useReducedMotion } from 'motion/react';
 import { useState } from 'react';
@@ -18,7 +23,7 @@ const WIDTH = 480;
 const HEIGHT = 220;
 const RADIUS = 34;
 
-export function GraphPreview({ graph }: { graph: GraphSpec | null }) {
+export function GraphPreview({ graph, highlight }: { graph: GraphSpec | null; highlight?: string[] }) {
   const reduce = useReducedMotion();
   const [hovered, setHovered] = useState<string | null>(null);
   const nodes = graph?.nodes ?? [];
@@ -34,7 +39,8 @@ export function GraphPreview({ graph }: { graph: GraphSpec | null }) {
   const edges = (graph?.edges ?? []).filter(
     (edge) => positions.has(edge.source) && positions.has(edge.target),
   );
-  const neighbors = hovered ? neighborSet(hovered, edges) : null;
+  const highlightSet = highlight && highlight.length > 0 ? new Set(highlight) : null;
+  const neighbors = highlightSet ?? (hovered ? neighborSet(hovered, edges) : null);
 
   return (
     <svg
