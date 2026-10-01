@@ -15,6 +15,7 @@ import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AgentBubble } from '../components/AgentBubble';
 import { AgentCard } from '../components/AgentCard';
+import { GraphPreview } from '../components/GraphPreview';
 import { Stagger } from '../components/motion';
 import { Badge, Banner, Button, Criterion, Label } from '../components/ui';
 import { EASE_OUT, POP, SPRING, TAP_PRESS } from '../lib/motion';
@@ -49,9 +50,18 @@ export function Roster() {
   const [draft, setDraft] = useState<TaskRow | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [hoveredTaskId, setHoveredTaskId] = useState<string | null>(null);
 
   const dayTasks = tasks.filter((task) => dayOf(task.created_at) === day);
   const selected = draft ?? dayTasks.find((task) => task.task_id === selectedId) ?? dayTasks[0] ?? null;
+  // Several tasks landing in the same hour used to render as full-width bars
+  // stacked almost exactly on top of each other -- unreadable the moment a
+  // day had more than one or two tasks. Small fixed-size blobs, laid into
+  // side-by-side lanes only when their times actually collide, never
+  // overlap; the title moves to a hover popover instead of living on the
+  // (now too-small-for-text) blob itself.
+  const blobs = useMemo(() => layoutBlobs(dayTasks), [dayTasks]);
+  const hoveredBlob = blobs.find((item) => item.task.task_id === hoveredTaskId) ?? null;
 
   const agentOptions = manifest?.agents ?? [];
 
@@ -198,12 +208,15 @@ export function Roster() {
               </div>
             ))}
 
-            {dayTasks.map((task) => {
-              const top = slotTop(task.created_at);
-              if (top === null) return null;
+            {blobs.map(({ task, top, lane }) => {
               const isSelected = selected?.task_id === task.task_id && !draft;
               const done = task.status === 'done';
               const killed = task.status === 'killed';
+              const left = 76 + lane * (BLOB_SIZE + BLOB_GAP);
+              // Solid, saturated fills rather than the earlier pale
+              // ring-on-tint look -- reads as a "bubble" at a glance, still
+              // entirely the existing three status colors (no new hue).
+              const fill = killed ? 'var(--danger)' : done ? 'var(--ok-dark)' : 'var(--accent-dark)';
               return (
                 <motion.button
                   key={task.task_id}
@@ -213,73 +226,86 @@ export function Roster() {
                     setDraft(null);
                     setSelectedId(task.task_id);
                   }}
-                  initial={{ opacity: 0, scale: 0.9 }}
+                  onHoverStart={() => setHoveredTaskId(task.task_id)}
+                  onHoverEnd={() => setHoveredTaskId((current) => (current === task.task_id ? null : current))}
+                  onFocus={() => setHoveredTaskId(task.task_id)}
+                  onBlur={() => setHoveredTaskId((current) => (current === task.task_id ? null : current))}
+                  initial={{ opacity: 0, scale: 0.5 }}
                   animate={{
                     opacity: 1,
-                    scale: 1,
-                    height: isSelected ? 44 : 36,
-                    background: isSelected ? 'var(--surface)' : killed ? 'var(--danger-soft)' : 'var(--accent-soft)',
+                    scale: isSelected ? 1.12 : 1,
+                    background: fill,
                   }}
-                  whileHover={{ y: -1 }}
+                  whileHover={{ y: -2, scale: isSelected ? 1.12 : 1.08 }}
                   whileTap={TAP_PRESS}
                   transition={SPRING}
+                  aria-label={`${task.title} — ${capitalize(task.status)}`}
+                  title={`${task.title} (${capitalize(task.status)})`}
                   style={{
                     position: 'absolute',
                     top,
-                    left: 76,
-                    right: 20,
-                    border: isSelected
-                      ? '1.5px solid var(--accent)'
-                      : killed
-                        ? '1px solid var(--danger-border)'
-                        : 'none',
-                    borderRadius: 'var(--r-sm)',
+                    left,
+                    width: BLOB_SIZE,
+                    height: BLOB_SIZE,
+                    borderRadius: '50%',
+                    border: isSelected ? '2px solid var(--text-strong)' : '2px solid transparent',
                     display: 'flex',
                     alignItems: 'center',
-                    gap: 10,
-                    padding: '0 14px',
+                    justifyContent: 'center',
+                    fontSize: 10,
+                    fontWeight: 700,
+                    color: '#fff',
                     cursor: 'pointer',
-                    textAlign: 'left',
-                    font: 'inherit',
+                    padding: 0,
+                    zIndex: isSelected ? 2 : 1,
+                    boxShadow: isSelected
+                      ? '0 2px 8px rgba(43, 31, 24, 0.22)'
+                      : '0 1px 3px rgba(43, 31, 24, 0.12)',
                   }}
                 >
-                  <span
-                    aria-hidden="true"
-                    style={{
-                      width: isSelected ? 20 : 18,
-                      height: isSelected ? 20 : 18,
-                      borderRadius: '50%',
-                      background: 'var(--surface)',
-                      border: `2px solid ${killed ? 'var(--danger)' : isSelected ? 'var(--accent)' : 'var(--accent-mid)'}`,
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      fontSize: 9,
-                      fontWeight: 700,
-                      color: killed ? 'var(--danger)' : 'var(--accent)',
-                      flexShrink: 0,
-                    }}
-                  >
-                    {initial(task.agent_id)}
-                  </span>
-                  <span
-                    style={{
-                      fontSize: isSelected ? 13 : 12,
-                      fontWeight: isSelected ? 600 : 400,
-                      color: 'var(--text-strong)',
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      whiteSpace: 'nowrap',
-                    }}
-                  >
-                    {task.title}
-                  </span>
-                  <span style={{ marginLeft: 'auto', fontSize: 11, color: statusColor(task.status), fontWeight: 600 }}>
-                    {done ? '✓ Done' : killed ? '✗ Killed' : isSelected ? 'Selected' : capitalize(task.status)}
-                  </span>
+                  {killed ? '✗' : done ? '✓' : initial(task.agent_id)}
                 </motion.button>
               );
             })}
+
+            {/* The blob is too small for its title -- this is where it
+                actually shows up, positioned by the same top/lane the blob
+                used, so it never has to guess where the pointer is. */}
+            <AnimatePresence>
+              {hoveredBlob && (
+                <motion.div
+                  key={hoveredBlob.task.task_id}
+                  initial={{ opacity: 0, scale: 0.9, y: 4 }}
+                  animate={{ opacity: 1, scale: 1, y: 0 }}
+                  exit={{ opacity: 0, scale: 0.95 }}
+                  transition={POP}
+                  style={{
+                    position: 'absolute',
+                    top: Math.max(hoveredBlob.top - 8, 0),
+                    left: 76 + hoveredBlob.lane * (BLOB_SIZE + BLOB_GAP) + BLOB_SIZE + 10,
+                    zIndex: 3,
+                    maxWidth: 240,
+                    background: 'var(--surface)',
+                    border: '1px solid var(--border)',
+                    borderRadius: 'var(--r-sm)',
+                    boxShadow: '0 6px 20px rgba(43, 31, 24, 0.14)',
+                    padding: '8px 12px',
+                    pointerEvents: 'none',
+                  }}
+                >
+                  <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text-strong)' }}>
+                    {hoveredBlob.task.title}
+                  </div>
+                  <div className="mono" style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 3 }}>
+                    {agentDisplayName(tables.agents, hoveredBlob.task.agent_id)} ·{' '}
+                    <span style={{ color: statusColor(hoveredBlob.task.status), fontWeight: 600 }}>
+                      {capitalize(hoveredBlob.task.status)}
+                    </span>{' '}
+                    · {shortTime(hoveredBlob.task.created_at)}
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
 
             {dayTasks.length === 0 && !draft && (
               <div
@@ -329,6 +355,18 @@ export function Roster() {
                   {relativeTime(selected.created_at)}
                 </div>
               </div>
+
+              {manifest && manifest.graph.nodes.length > 0 && (draft ? draft.assignees : selected.assignees).length > 0 && (
+                <div className="field">
+                  <Label>Collaboration</Label>
+                  <div className="card card--flush" style={{ padding: '12px 16px 6px' }}>
+                    <GraphPreview graph={manifest.graph} highlight={draft ? draft.assignees : selected.assignees} />
+                  </div>
+                  <p style={{ margin: '6px 0 0', fontSize: 12, color: 'var(--text-faint)' }}>
+                    Where this task's assignees sit in the confirmed contract — the rest of the graph dims.
+                  </p>
+                </div>
+              )}
 
               <div className="field">
                 <Label>Assignees</Label>
@@ -592,6 +630,43 @@ function slotTop(iso: string): number | null {
   const hour = date.getHours() + date.getMinutes() / 60;
   if (hour < HOURS[0] || hour >= HOURS[HOURS.length - 1] + 1) return null;
   return (hour - HOURS[0]) * SLOT_HEIGHT + 6;
+}
+
+const BLOB_SIZE = 28;
+const BLOB_GAP = 6;
+
+interface TaskBlob {
+  task: TaskRow;
+  top: number;
+  /** Horizontal column within the day, 0-based -- only advances past 0 for
+   * tasks close enough in time to actually collide. */
+  lane: number;
+}
+
+/**
+ * The classic calendar "side-by-side when times collide" layout: sorted by
+ * time, each task takes the lowest-numbered lane whose most recent occupant
+ * is already far enough above it (>= one blob + gap); otherwise it bumps to
+ * the next lane. Two tasks minutes apart end up in different lanes, side by
+ * side; two tasks hours apart both land back in lane 0. Nothing here reads
+ * a task's own width -- unlike the previous full-width bars, a blob's
+ * footprint is fixed, so this only ever needs one number per lane.
+ */
+function layoutBlobs(tasks: TaskRow[]): TaskBlob[] {
+  const withTop = tasks
+    .map((task) => ({ task, top: slotTop(task.created_at) }))
+    .filter((item): item is { task: TaskRow; top: number } => item.top !== null)
+    .sort((a, b) => a.top - b.top);
+
+  const laneLastTop: number[] = [];
+  return withTop.map(({ task, top }) => {
+    let lane = 0;
+    while (laneLastTop[lane] !== undefined && top - laneLastTop[lane] < BLOB_SIZE + BLOB_GAP) {
+      lane += 1;
+    }
+    laneLastTop[lane] = top;
+    return { task, top, lane };
+  });
 }
 
 function hourLabel(hour: number): string {
