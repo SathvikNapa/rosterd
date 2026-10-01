@@ -15,7 +15,7 @@ from typing import Literal
 import httpx
 from pydantic import BaseModel
 
-from shared import RunStatus, Violation
+from rosterd_contracts import RunStatus, Violation
 
 logger = logging.getLogger("rosterd.kernel.coordinator_client")
 

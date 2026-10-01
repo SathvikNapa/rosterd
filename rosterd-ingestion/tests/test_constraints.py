@@ -5,7 +5,7 @@ import pytest
 
 from constraints_loader import parse_constraints, validate_against_graph
 from errors import ConstraintsParseError, ConstraintsValidationError
-from shared import GraphEdge
+from rosterd_contracts import GraphEdge
 
 
 def test_parses_canonical_nested_shape():

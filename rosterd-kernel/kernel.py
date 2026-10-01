@@ -13,7 +13,7 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-from shared import Priority, RunStatus, Violation
+from rosterd_contracts import Priority, RunStatus, Violation
 
 
 class DispatchStatus(str, Enum):

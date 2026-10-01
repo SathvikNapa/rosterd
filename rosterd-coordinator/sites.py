@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 from coordinator import EventRequest, SiteSummary
-from shared import RunStatus, SiteStatus
+from rosterd_contracts import RunStatus, SiteStatus
 
 
 def _is_trouble(event: EventRequest) -> bool:

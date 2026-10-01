@@ -52,7 +52,7 @@ from manifest import ManifestIndex
 from policy import PolicyStore
 from registry import InstanceRegistry
 from run_store import RunStore
-from shared import RunStatus, Violation
+from rosterd_contracts import RunStatus, Violation
 from spacetime import AgentRow, SpacetimeWriter
 from tracing import mark_violation
 

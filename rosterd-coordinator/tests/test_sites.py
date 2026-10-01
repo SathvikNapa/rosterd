@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 
 from config import Settings
 from coordinator import EventRequest
-from shared import SiteStatus
+from rosterd_contracts import SiteStatus
 from sites import SiteRegistry
 
 

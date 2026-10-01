@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from kernel import RunResponse
-from shared import RunStatus, Violation
+from rosterd_contracts import RunStatus, Violation
 
 
 @dataclass

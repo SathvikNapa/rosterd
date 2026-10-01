@@ -16,7 +16,7 @@ from typing import Any
 
 from demo_agent_client import InvokeResponse
 from manifest import ConstraintRule
-from shared import Violation
+from rosterd_contracts import Violation
 
 _SEGMENT_RE = re.compile(r"^([a-zA-Z_][a-zA-Z0-9_]*)?((?:\[[^\]]+\])*)$")
 _INDEX_RE = re.compile(r"\[([^\]]+)\]")

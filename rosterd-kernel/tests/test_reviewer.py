@@ -8,7 +8,7 @@ from types import SimpleNamespace
 
 from reviewer import ReviewDecision, ReviewerLoop
 from run_store import RunStore
-from shared import RunStatus
+from rosterd_contracts import RunStatus
 
 
 class FakeDispatcher:

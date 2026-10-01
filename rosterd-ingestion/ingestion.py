@@ -13,7 +13,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, HttpUrl
 
-from shared import GraphSpec, Priority
+from rosterd_contracts import GraphSpec, Priority
 
 
 class ManifestStatus(str, Enum):

@@ -10,7 +10,7 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-from shared import RunStatus, SiteStatus, Violation
+from rosterd_contracts import RunStatus, SiteStatus, Violation
 
 
 class EventRequest(BaseModel):

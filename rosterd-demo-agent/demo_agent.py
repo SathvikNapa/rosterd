@@ -6,7 +6,7 @@ from enum import Enum
 
 from pydantic import BaseModel
 
-from shared import GraphSpec
+from rosterd_contracts import GraphSpec
 
 
 class EntryNode(str, Enum):

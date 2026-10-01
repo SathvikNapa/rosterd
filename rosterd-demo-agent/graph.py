@@ -21,7 +21,7 @@ from langgraph.graph import END, START, StateGraph
 
 from brain import get_brain
 from refund_node import refund_exception_node
-from shared import GraphEdge, GraphSpec
+from rosterd_contracts import GraphEdge, GraphSpec
 from toolrun import attempt_tool
 from tools import charge_payment, check_stock, reserve_inventory
 

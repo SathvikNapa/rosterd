@@ -29,7 +29,7 @@ from pydantic import BaseModel, Field
 from config import MANIFEST_SCHEMA_VERSION, Settings
 from errors import ManifestNotFoundError
 from ingestion import AgentManifestEntry, ManifestStatus
-from shared import GraphSpec
+from rosterd_contracts import GraphSpec
 
 
 def sha256_text(text: str) -> str:

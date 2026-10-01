@@ -1,12 +1,14 @@
-"""Shared types used across ingestion, kernel, demo-agent, and coordinator schemas.
+"""Shared wire-contract types used across rosterd-ingestion, rosterd-kernel,
+rosterd-demo-agent, and rosterd-coordinator.
 
-Verbatim from the team brief. Do not redefine these elsewhere -- every
-service in the repo carries its own copy of this exact file so each can be
-built and deployed independently, but the *shape* has to stay identical or
-status enums drift apart between services.
+The single source of truth for these shapes -- see this package's own
+README for why this is a real installed package rather than the
+hand-duplicated `shared.py` copies it replaces. The *shape* has to stay
+identical across every service or status enums drift apart between them;
+a version bump here is how that's now enforced instead of hoped for.
 """
-from datetime import datetime
 from enum import Enum
+
 from pydantic import BaseModel
 
 
