@@ -11,10 +11,10 @@ Answers only, never calls out. Endpoints:
 
 ## Files
 - `demo_agent.py`   API schema, exactly as in the contract (don't edit)
-- `shared.py`       team's shared types, kept verbatim per the team convention (every service carries its own copy)
-- `tools.py`        tool schemas: `Field(le=50)`, `Field(le=100)`  <- ingestion reads these
+- shared types now come from `rosterd-contracts` (see `../libs/rosterd-contracts/`), not a hand-copied `shared.py`
+- `tools.py`        tool schemas: `Field(gt=0, le=50)`, `Field(gt=0, le=100)`, `Field(gt=0, le=2000)`  <- ingestion reads these
 - `refund_node.py`  Refund/Exception node with `interrupt()`      <- ingestion reads this
-- `graph.py`        the 3-node graph, incl. a module-level `graph = build_graph()` <- ingestion reads this
+- `graph.py`        the 5-node graph (order_intake, fulfillment, refund_exception, catalog, payment), incl. a module-level `graph = build_graph()` <- ingestion reads this
 - `langgraph.json`  points ingestion at `graph.py:graph` (the convention its discovery checks first)
 - `constraints.yaml`  reference copy of the constraints text to paste into ingestion's `POST /ingest` (not auto-read from the repo -- see the file's own header comment, and the gap it flags)
 - `brain.py`        scripted vs LLM decision-making

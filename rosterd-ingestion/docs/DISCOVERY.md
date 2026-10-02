@@ -54,6 +54,19 @@ When a node ends up with no tools at all, the manifest carries a warning suggest
 
 A docstring is only trusted when its source file is **inside the cloned repo**. Without that check, LangGraph's own internals leak in: `__start__` wraps an internal lambda, and its docstring ("A much simpler version of RunnableLambda…") would otherwise be presented as an agent's purpose.
 
+## CrewAI
+
+A CrewAI `Crew` has no `get_graph()` and shares no base class with a LangChain `Runnable` at all, so it's a genuinely separate path, checked **before** the LangChain one: `is_crewai_repo()` looks for `import crewai`/`from crewai import ...` anywhere in the repo (no import, no `Crew(...)` needed yet — cheap and first). If found, `locate_crew()` finds the `Crew(...)` assignment (same tiered approach as `locate_graph()`, minus a langgraph.json-equivalent tier — CrewAI has no CLI manifest convention) and `crewai_introspect_worker.py` imports it in its own subprocess.
+
+The mapping onto the same `{nodes, edges}` shape the LangChain path produces, settled explicitly before writing any of it, not assumed:
+
+- **A `Task` is the node, not the `Agent`.** Only a Task has a position in the workflow (via `Process.sequential`'s ordering, or an explicit `context=[...]` dependency) — the same role a LangGraph node plays. A node's name is `task.name` if set, else the executing agent's own `role` (deduplicated with a numeric suffix if the same agent runs more than one task).
+- **Edges** come from an explicit `context=[...]` dependency where set; `Process.sequential` additionally gets an implicit edge from the task immediately before it when no explicit context is given — CrewAI's own real runtime behavior for that process, not a convention invented here. `Process.hierarchical`'s manager agent decides routing at runtime, which isn't statically knowable, so no implicit edges are synthesized for it.
+- **Tools** come from `task.tools`, which CrewAI itself already populates from the executing agent's own tools at Task construction (confirmed empirically — nothing here re-reads `agent.tools` separately).
+- **There is no `interrupt()`-equivalent in CrewAI**, full stop. Every CrewAI-discovered node is `direct_assignable` with no gate, regardless of what `constraints.yaml` says, and the manifest carries a warning saying so. This was a real design decision, not a default: the alternative (inventing a "needs approval" naming convention CrewAI itself has no concept of) was considered and rejected as more likely to mislead than help.
+
+CrewAI repos get the same sandboxed-install retry as LangChain ones (`sandbox.py`) when their own dependencies aren't importable yet, and the same subprocess isolation `crewai_introspect_worker.py`'s own docstring describes — see the README's "Security note", which applies to both workers equally.
+
 ## Known limits
 
 Structure is read from a graph compiled at import time. A graph assembled per-request, or one whose nodes depend on runtime configuration, is discovered as it looked at import.

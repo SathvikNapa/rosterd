@@ -43,7 +43,12 @@ _CANDIDATE_FILES = [
 #: Attribute names commonly holding a compiled graph, in search order.
 _CANDIDATE_ATTRS = ["graph", "app", "workflow", "agent", "compiled_graph", "chain"]
 
+#: CrewAI's own equivalents of the two lists above.
+_CREWAI_CANDIDATE_FILES = ["crew.py", "main.py", "app.py", "src/crew.py", "src/main.py"]
+_CREWAI_CANDIDATE_ATTRS = ["crew"]
+
 _WORKER = Path(__file__).parent / "_introspect_worker.py"
+_WORKER_CREWAI = Path(__file__).parent / "crewai_introspect_worker.py"
 
 
 @dataclass
@@ -271,8 +276,103 @@ def locate_graph(repo: Path, settings: Settings) -> GraphLocation:
     )
 
 
-def _run_worker(location: GraphLocation, settings: Settings, *, python_executable: str | None = None) -> dict:
-    """Import the graph in a child process and get its structure back.
+def _imports_crewai(path: Path) -> bool:
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8", errors="replace"))
+    except (SyntaxError, ValueError, OSError):
+        return False
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import) and any(alias.name.split(".")[0] == "crewai" for alias in node.names):
+            return True
+        if isinstance(node, ast.ImportFrom) and node.module and node.module.split(".")[0] == "crewai":
+            return True
+    return False
+
+
+def _crewai_assignments(path: Path) -> list[str]:
+    """Top-level names assigned from a `Crew(...)` call -- the CrewAI
+    equivalent of `_compiled_assignments`/`_lcel_assignments` above, same
+    shape, different target class name."""
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8", errors="replace"))
+    except (SyntaxError, ValueError, OSError):
+        return []
+    names: list[str] = []
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call):
+            func = node.value.func
+            func_name = func.id if isinstance(func, ast.Name) else getattr(func, "attr", None)
+            if func_name == "Crew":
+                names.extend(t.id for t in node.targets if isinstance(t, ast.Name))
+    return names
+
+
+def is_crewai_repo(repo: Path) -> bool:
+    """Cheap, import-free signal: does anything in this repo import
+    `crewai` at all? Checked before ever trying the LangChain/LangGraph
+    path in `discover()`, since the two are mutually exclusive frameworks
+    with no shared base to duck-type against (a `crewai.Crew` has no
+    `get_graph()`, unlike every LangChain Runnable) -- there's no "try one,
+    fall back to the other" seam the way `_compiled_assignments` vs.
+    `_lcel_assignments` is just two patterns checked in the same pass."""
+    return any(_imports_crewai(path) for path in astscan.iter_python_files(repo))
+
+
+def locate_crew(repo: Path, settings: Settings) -> GraphLocation:
+    """Find the Crew object, cheapest and most explicit signal first --
+    same philosophy as locate_graph, with no langgraph.json-equivalent
+    tier (CrewAI has no CLI manifest convention)."""
+    if settings.graph_spec_override:
+        found = _parse_spec(settings.graph_spec_override, repo)
+        if found:
+            return found
+        raise GraphNotFoundError(
+            f"ROSTERD_GRAPH_SPEC={settings.graph_spec_override!r} does not resolve in this repo."
+        )
+
+    searched = [repo / rel for rel in _CREWAI_CANDIDATE_FILES]
+    searched += [p for p in astscan.iter_python_files(repo) if p not in searched]
+    for path in searched:
+        if not path.is_file():
+            continue
+        for name in _crewai_assignments(path):
+            return GraphLocation(str(path), name, f"Crew(...) assignment in {path.name}", project_root=path.parent)
+
+    for rel in _CREWAI_CANDIDATE_FILES:
+        path = repo / rel
+        if not path.is_file():
+            continue
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8", errors="replace"))
+        except (SyntaxError, ValueError):
+            continue
+        assigned = {
+            t.id
+            for node in tree.body
+            if isinstance(node, ast.Assign)
+            for t in node.targets
+            if isinstance(t, ast.Name)
+        }
+        for attr in _CREWAI_CANDIDATE_ATTRS:
+            if attr in assigned:
+                return GraphLocation(str(path), attr, f"conventional name in {rel}", project_root=path.parent)
+
+    raise GraphNotFoundError(
+        "This repo imports crewai, but no Crew(...) assignment was found. Set "
+        "ROSTERD_GRAPH_SPEC to 'path/to/module.py:attr'.",
+        looked_for=[str(p) for p in _CREWAI_CANDIDATE_FILES],
+    )
+
+
+def _run_worker(
+    location: GraphLocation,
+    settings: Settings,
+    *,
+    python_executable: str | None = None,
+    worker: Path = _WORKER,
+) -> dict:
+    """Import the graph (or CrewAI crew, via `worker=_WORKER_CREWAI`) in a
+    child process and get its structure back.
 
     The worker chdir's into and sys.path-inserts `location.project_root`,
     not necessarily the outer repo root -- a nested langgraph.json's
@@ -287,13 +387,16 @@ def _run_worker(location: GraphLocation, settings: Settings, *, python_executabl
     A `dotted:` prefix on the module-ref argv tells the worker to
     `importlib.import_module()` it instead of loading it as a file --
     see GraphLocation.is_dotted / _parse_spec's docstring for why a
-    langgraph.json spec can be either."""
+    langgraph.json spec can be either. Both workers share this exact argv
+    protocol and JSON response shape -- see crewai_introspect_worker.py's
+    own docstring for why that's a deliberate design choice, not an
+    accident of copying this function."""
     module_ref = f"dotted:{location.module_ref}" if location.is_dotted else location.module_ref
     try:
         completed = subprocess.run(
             [
                 python_executable or sys.executable,
-                str(_WORKER),
+                str(worker),
                 str(location.project_root),
                 module_ref,
                 location.attr,
@@ -379,15 +482,21 @@ def _looks_like_missing_dependency(error: GraphLoadError) -> bool:
     return "ModuleNotFoundError" in text or ("ImportError" in text and "cannot import name" not in text)
 
 
-def _discover_import(repo: Path, location: GraphLocation, settings: Settings, warnings: list[str]) -> dict:
+def _discover_import(
+    repo: Path, location: GraphLocation, settings: Settings, warnings: list[str], *, worker: Path = _WORKER
+) -> dict:
     """The fast path (the ingestion service's own interpreter, no install
     step), with one fallback: a sandboxed install-and-retry when that fails
     on what looks like a missing dependency -- a repo that needs
     `pip install -e .` / `uv sync` before its own graph module is even
     importable. See sandbox.py's module docstring for what this does and
-    does not isolate against."""
+    does not isolate against. `worker` selects which introspection script
+    runs (LangChain/LangGraph by default, `_WORKER_CREWAI` for a CrewAI
+    repo) -- a CrewAI repo needs its own dependencies installed before
+    `import crewai` even resolves just as often as a LangChain one does,
+    so this fallback isn't LangChain-specific either."""
     try:
-        return _run_worker(location, settings)
+        return _run_worker(location, settings, worker=worker)
     except GraphLoadError as exc:
         original = exc
         if not _looks_like_missing_dependency(exc):
@@ -403,12 +512,67 @@ def _discover_import(repo: Path, location: GraphLocation, settings: Settings, wa
         "graph module was importable -- see rosterd-ingestion/sandbox.py for what that "
         "does and does not isolate against."
     )
-    return _run_worker(location, settings, python_executable=python)
+    return _run_worker(location, settings, python_executable=python, worker=worker)
+
+
+def _discover_crewai(repo: Path, settings: Settings, warnings: list[str]) -> DiscoveryResult:
+    """CrewAI has no interrupt()-equivalent and no static AST pass of its
+    own (a Task is a declarative object with a description string, not a
+    function body to scan for tool calls) -- every node from here is
+    direct_assignable with no gate, by explicit design decision, not by
+    omission. See crewai_introspect_worker.py's own docstring for the
+    full mapping this builds from (a Task is the node; Process.sequential
+    gets implicit ordering edges; Process.hierarchical gets none, its
+    manager agent's routing isn't statically knowable)."""
+    location = locate_crew(repo, settings)
+    # _run_worker (called inside _discover_import) already raises GraphLoadError
+    # on a failed import -- same as the LangChain path, nothing extra needed here.
+    payload = _discover_import(repo, location, settings, warnings, worker=_WORKER_CREWAI)
+
+    nodes: dict[str, DiscoveredNode] = {}
+    for name, info in payload["nodes"].items():
+        node = DiscoveredNode(name=name, kind=info.get("kind", "unknown"), purpose=info.get("purpose", ""))
+        node.tools = list(info.get("tools") or [])
+        node.has_interrupt = False  # no interrupt()-equivalent in CrewAI -- see module docstring above
+        nodes[name] = node
+
+    edges = [GraphEdge(source=e["source"], target=e["target"], condition=None) for e in payload["edges"]]
+    node_names = list(payload["nodes"].keys())
+    if not node_names:
+        raise GraphLoadError("The crew compiled but contains no tasks.")
+
+    warnings.append(
+        "CrewAI has no interrupt()-equivalent: every task here is direct_assignable with no "
+        "approval gate, regardless of what constraints.yaml says -- an honest capability gap, "
+        f"not a simulated one. Process: {payload.get('process', 'unknown')}."
+    )
+    if payload.get("process") == "hierarchical":
+        warnings.append(
+            "Process.hierarchical: a manager agent decides task routing at runtime, which isn't "
+            "statically knowable -- only explicit task context=[...] dependencies are reflected "
+            "as edges here, same spirit as LangGraph's own 'a graph assembled per-request' limit."
+        )
+
+    return DiscoveryResult(
+        graph=GraphSpec(nodes=node_names, edges=edges),
+        nodes=nodes,
+        agent_nodes=node_names,  # every CrewAI task is directly assignable -- no entry_only_via gate exists
+        graph_attr=location.how,
+        mode="crewai",
+        warnings=warnings,
+    )
 
 
 def discover(repo: Path, settings: Settings) -> DiscoveryResult:
     """Discover the graph, its nodes, and each node's tools."""
     repo = repo.resolve()
+
+    # CrewAI and LangChain/LangGraph are mutually exclusive frameworks with
+    # no shared base to duck-type against (a crewai.Crew has no
+    # get_graph()) -- checked first, cheaply, with nothing imported.
+    if is_crewai_repo(repo):
+        return _discover_crewai(repo, settings, [])
+
     scan = astscan.scan_repo(repo)
     warnings: list[str] = []
     if scan.unparsed:
