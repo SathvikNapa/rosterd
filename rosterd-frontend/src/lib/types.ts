@@ -3,7 +3,7 @@
  *   rosterd-ingestion/{ingestion,shared}.py
  *   rosterd-kernel/{kernel,manifest,shared}.py
  *   rosterd-coordinator/{coordinator,shared}.py
- * and from rosterd-spacetimedb/spacetimedb/src/index.ts for the table rows.
+ * and from rosterd-postgres/schema.sql for the table rows.
  *
  * Keep field names snake_case: these are the wire shapes, not view models.
  */
@@ -203,7 +203,7 @@ export interface EventLogEntry {
   timestamp: string;
 }
 
-// --------------------------------------------------- SpacetimeDB tables
+// --------------------------------------------------- live state tables
 
 export interface AgentRow {
   instance_id: string;

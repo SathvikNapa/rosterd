@@ -46,7 +46,7 @@ README's "Architecture" section for the full picture):
 - **`application/`** — orchestration and use cases. Depends on
   `domain/ports.py`, never on a concrete adapter module directly.
 - **`adapters/`** — concrete implementations of a port: an HTTP client, a
-  SpacetimeDB writer, a Docker backend, an LLM call. New adapters implement
+  Postgres writer, a Docker backend, an LLM call. New adapters implement
   an existing `domain/ports.py` Protocol wherever one exists, rather than
   introducing a new one-off interface.
 - **`main.py`** — thin entrypoint only. If you're adding real logic here,
@@ -60,7 +60,7 @@ deliberately deferred rather than rushed.
 ## Tests
 
 Every Python service's suite runs against fakes/stubs, not live
-infrastructure — no Docker daemon, SpacetimeDB, or network access required
+infrastructure — no Docker daemon, Postgres, or network access required
 to run `pytest`. Please add a test with any behavior change; the existing
 suites (`tests/`) are the actual safety net for a change like a
 restructuring or a schema fix, not just documentation.

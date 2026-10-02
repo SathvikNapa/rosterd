@@ -38,7 +38,7 @@ The brief explicitly left this open ("new `manifest_id` per re-ingest/re-confirm
 
 **Person 3 (frontend): use the `manifest_id` that `/confirm` returns.** The id you posted to is the draft; the id you get back is the live one. Everything after confirmation — Contracts, Roster, `/ask/parse` — must use the returned id. Treating the draft id as still-current after confirming is the one mistake this design makes easy to make, and it fails loudly rather than silently: `/ask/parse` rejects a draft with `409 manifest_not_confirmed`.
 
-**Person 1 (kernel): ignore drafts entirely.** A draft manifest governs nothing. When SpacetimeDB lands this becomes a subscription filtered to `status: confirmed`; until then, check `provenance.status` on the manifest you pinned.
+**Person 1 (kernel): ignore drafts entirely.** A draft manifest governs nothing. When a Postgres subscription lands this becomes a subscription filtered to `status: confirmed`; until then, check `provenance.status` on the manifest you pinned.
 
 ## Consequences
 
@@ -54,7 +54,7 @@ This build implements the confirm gate and `/ask/parse` on the **existing** arch
 
 | Not implemented | Why |
 | --- | --- |
-| SpacetimeDB storage | Person 3 owns the module, and the brief says to agree the `manifests` table schema together first. Storage stays file-backed; `ManifestStore` is the single seam to swap. |
+| Postgres storage | rosterd-postgres/schema.sql already defines the `manifests` table. Storage stays file-backed here; `ManifestStore` is the single seam to swap. |
 | Inferred `ConstraintRule`s (schema/code/interrupt sources) | Needs Person 4's typed tool schemas and at least one `interrupt()` call to work against. `constraints.yaml` remains the source of constraints for now. |
 | OTel spans | No collector in the stack yet. |
 

@@ -78,7 +78,7 @@ export function RunDetail() {
 
     poll();
     // The run's own status is REST-only; only its coordinator event lands in
-    // SpacetimeDB, so this one screen polls while the run is still open.
+    // Postgres, so this one screen polls while the run is still open.
     const timer = window.setInterval(poll, config.pollIntervalMs);
     return () => {
       controller.abort();

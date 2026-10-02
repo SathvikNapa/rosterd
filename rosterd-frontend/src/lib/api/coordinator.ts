@@ -1,6 +1,6 @@
 /**
  * rosterd-coordinator (:8300). Read paths here are the documented FALLBACK
- * for when SpacetimeDB is unreachable — the Federation screen subscribes to
+ * for when the live relay is unreachable — the Federation screen subscribes to
  * the `sites` and `events` tables instead. POST /events and POST /policy/push
  * are kernel-to-coordinator traffic and are deliberately not exposed here.
  */

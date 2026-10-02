@@ -26,7 +26,7 @@ interface PersistedSession {
   lastRunId: string | null;
   /**
    * run_id -> task_id. Neither `runs` (kernel, REST only) nor `tasks`
-   * (SpacetimeDB) carries the other's id, so the dispatch that creates both
+   * (Postgres) carries the other's id, so the dispatch that creates both
    * is the only place the link can be recorded.
    */
   runLinks: Record<string, string>;

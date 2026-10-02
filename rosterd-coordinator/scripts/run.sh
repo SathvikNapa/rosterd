@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Serves the coordinator on :8300 (or $PORT). No SpacetimeDB or kernel
+# Serves the coordinator on :8300 (or $PORT). No Postgres or kernel
 # needs to be running -- writes fall back to logging, and there's simply
 # nothing to broadcast to until ROSTERD_COORDINATOR_SITE_KERNELS is set.
 set -euo pipefail

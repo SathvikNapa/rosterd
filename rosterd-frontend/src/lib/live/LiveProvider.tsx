@@ -1,12 +1,11 @@
 /**
- * One live view of the six SpacetimeDB tables, for every screen.
+ * One live view of the six Postgres tables, for every screen.
  *
  * Source, in preference order:
- *   1. websocket subscription via generated bindings   (./bindings.ts)
- *   2. SpacetimeDB HTTP SQL poll                       (./sql.ts)
- *   3. coordinator REST (`/sites`, `/events`)          — documented fallback
- *      for when SpacetimeDB itself is down; covers `sites` and `events` only,
- *      which is all the coordinator knows about.
+ *   1. the coordinator's live-relay WebSocket   (./ws.ts)
+ *   2. coordinator REST (`/sites`, `/events`)    — fallback for when the
+ *      relay itself can't connect; covers `sites` and `events` only,
+ *      which is all the coordinator knows about over plain REST.
  *
  * The transport in use is surfaced in the nav bar, so "why is Roster empty"
  * is answerable without opening devtools.
@@ -16,17 +15,11 @@ import type { ReactNode } from 'react';
 import { config, isDemo } from '../config';
 import { getEvents, getSites } from '../api/coordinator';
 import type { EventRow, LiveTables, SiteRow } from '../types';
-import { bindingsAvailable, connectViaBindings } from './bindings';
 import { demoTables } from './demo';
-import { EMPTY_TABLES, fetchAllTables } from './sql';
+import { EMPTY_TABLES } from './rows';
+import { connectLive } from './ws';
 
-export type LiveTransport =
-  | 'demo'
-  | 'websocket'
-  | 'sql-poll'
-  | 'coordinator-rest'
-  | 'connecting'
-  | 'disconnected';
+export type LiveTransport = 'demo' | 'websocket' | 'coordinator-rest' | 'connecting' | 'disconnected';
 
 interface LiveContextValue {
   tables: LiveTables;
@@ -51,9 +44,9 @@ export function LiveProvider({ children }: { children: ReactNode }) {
   transportRef.current = transport;
 
   /**
-   * Re-read now. On the websocket the rows are already streaming, so this is
-   * a no-op rather than a reconnect — bumping the nonce would tear the
-   * subscription down and rebuild it after every dispatch.
+   * Re-read now. On the live WebSocket rows are already streaming, so this
+   * is a no-op rather than a reconnect — bumping the nonce would tear the
+   * connection down and rebuild it after every dispatch.
    */
   const refresh = useCallback(() => {
     if (transportRef.current === 'websocket' || transportRef.current === 'demo') return;
@@ -74,37 +67,30 @@ export function LiveProvider({ children }: { children: ReactNode }) {
       setError(null);
     };
 
-    /** Tier 2/3, run on an interval. */
+    /** Fallback tier, run on an interval. */
     const poll = async () => {
       try {
-        applyTables(await fetchAllTables(controller.signal));
-        if (!cancelled) setTransport('sql-poll');
-        return;
-      } catch (sqlError) {
-        if (cancelled || controller.signal.aborted) return;
-        try {
-          const [sites, events] = await Promise.all([
-            getSites(controller.signal),
-            getEvents({ limit: 100 }, controller.signal),
-          ]);
-          if (cancelled) return;
-          setTables({
-            ...tablesRef.current,
-            sites: sites.map(toSiteRowFromSummary),
-            events: events.map(toEventRowFromLog),
-          });
-          setTransport('coordinator-rest');
-          setError(
-            'SpacetimeDB is unreachable — showing coordinator REST fallback ' +
-              '(sites and events only; agents, metrics, tasks and manifests are blank).',
-          );
-        } catch {
-          // Both tiers are down: say so rather than showing "Polling" over
-          // data that is never going to arrive.
-          if (cancelled) return;
-          setTransport('disconnected');
-          setError(describe(sqlError));
-        }
+        const [sites, events] = await Promise.all([
+          getSites(controller.signal),
+          getEvents({ limit: 100 }, controller.signal),
+        ]);
+        if (cancelled) return;
+        setTables({
+          ...tablesRef.current,
+          sites: sites.map(toSiteRowFromSummary),
+          events: events.map(toEventRowFromLog),
+        });
+        setTransport('coordinator-rest');
+        setError(
+          'The live connection is unreachable — showing the coordinator REST fallback ' +
+            '(sites and events only; agents, metrics, tasks and manifests are blank).',
+        );
+      } catch (restError) {
+        // Both tiers are down: say so rather than showing "Polling" over
+        // data that is never going to arrive.
+        if (cancelled) return;
+        setTransport('disconnected');
+        setError(describe(restError));
       }
     };
 
@@ -113,35 +99,23 @@ export function LiveProvider({ children }: { children: ReactNode }) {
       timer = window.setInterval(() => void poll(), config.pollIntervalMs);
     };
 
-    const start = async () => {
-      if (bindingsAvailable()) {
-        try {
-          handle = await connectViaBindings(
-            (next) => {
-              applyTables(next);
-              if (!cancelled) setTransport('websocket');
-            },
-            (wsError) => {
-              // The subscription path is the one part of this handoff that is
-              // "should work per the SDK's docs", not "watched it work"
-              // (rosterd-param-frontend.md gap 5) — so a failure here drops to
-              // polling rather than leaving the UI blank.
-              if (cancelled) return;
-              handle?.disconnect();
-              handle = null;
-              setError(`SpacetimeDB subscription failed (${describe(wsError)}); polling instead.`);
-              if (timer === undefined) startPolling();
-            },
-          );
-          if (handle) return;
-        } catch (bindingError) {
-          if (!cancelled) setError(`${describe(bindingError)} — polling instead.`);
-        }
-      }
-      startPolling();
+    const start = () => {
+      handle = connectLive(
+        (next) => {
+          applyTables(next);
+          if (!cancelled) setTransport('websocket');
+        },
+        (wsError) => {
+          if (cancelled) return;
+          handle?.disconnect();
+          handle = null;
+          setError(`Live connection failed (${describe(wsError)}); polling instead.`);
+          if (timer === undefined) startPolling();
+        },
+      );
     };
 
-    void start();
+    start();
 
     return () => {
       cancelled = true;

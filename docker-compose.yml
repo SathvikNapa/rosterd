@@ -143,7 +143,7 @@ services:
   # into the official image's init-script directory, which the entrypoint
   # runs exactly once, against a fresh (empty) data volume -- a schema
   # change after that needs `docker compose down -v` to take effect, same
-  # tradeoff the SpacetimeDB-publish step this replaces used to have.
+  # tradeoff the SpacetimeDB-era publish step this replaces used to have.
   postgres:
     image: postgres:16-alpine
     environment:
