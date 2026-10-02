@@ -116,13 +116,20 @@ export function Ingest() {
   // ingest fail with repo_fetch_failed on first load).
   const [repoUrl, setRepoUrl] = useState(session.repoUrl || ROSTERD_EXAMPLE_URL);
   const [constraintsYaml, setConstraintsYaml] = useState(defaultConstraintsFor(repoUrl));
-  // Only true once the navigator has typed into the constraints box
-  // directly -- until then, switching the repo URL keeps the constraints
-  // default in sync with it (rosterd-example's real numbers for that one
-  // repo, an empty-but-valid block for anything else) instead of silently
-  // carrying rosterd-example's node names over to a repo that doesn't have
-  // them.
-  const [constraintsEdited, setConstraintsEdited] = useState(false);
+  // Which repo URL the navigator last hand-edited constraints.yaml FOR --
+  // null means "not hand-edited since this repo URL was set". Scoped to the
+  // URL, not a plain once-true-forever boolean: a boolean here meant a
+  // single edit made while looking at rosterd-example's default (even just
+  // to peek at it) permanently stopped the box from re-syncing to whatever
+  // DIFFERENT repo got typed in next -- confirmed live, pointing this
+  // screen at react-agent while rosterd-example's own node names
+  // (order_intake, fulfillment, ...) were still sitting in the box produced
+  // a hard 422 constraints_unknown_nodes before discovery's result could
+  // ever reach the Review screen, which reads as "no agents found" with no
+  // indication why. Comparing against the CURRENT repoUrl means switching
+  // repos always re-syncs to a sane default for whatever's now typed in,
+  // unless you've specifically edited the box for that exact URL.
+  const [editedForUrl, setEditedForUrl] = useState<string | null>(null);
   const [showYaml, setShowYaml] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -178,9 +185,11 @@ export function Ingest() {
               const nextUrl = event.target.value;
               setRepoUrl(nextUrl);
               // Keep the constraints default matched to whichever repo is
-              // typed in, right up until the navigator edits the box
-              // themselves -- see constraintsEdited's comment above.
-              if (!constraintsEdited) {
+              // typed in, unless the navigator specifically edited the box
+              // for THIS exact URL already -- see editedForUrl's comment
+              // above. Checked against nextUrl directly (not against the
+              // not-yet-updated `repoUrl` still in this closure).
+              if (editedForUrl !== nextUrl) {
                 setConstraintsYaml(defaultConstraintsFor(nextUrl));
               }
             }}
@@ -222,7 +231,7 @@ export function Ingest() {
                   className="textarea"
                   value={constraintsYaml}
                   onChange={(event) => {
-                    setConstraintsEdited(true);
+                    setEditedForUrl(repoUrl);
                     setConstraintsYaml(event.target.value);
                   }}
                   spellCheck={false}
