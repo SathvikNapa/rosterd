@@ -178,6 +178,43 @@ def _load_attr(module_ref: str, attr: str) -> Any:
     return obj
 
 
+def _rename_map(drawable: Any) -> dict[str, str | None]:
+    """`drawable.nodes` is keyed by an opaque id for a plain LangChain
+    Runnable (LCEL) -- `.get_graph()`'s own auto-generated hex id, not a
+    name anyone chose -- whereas LangGraph's StateGraph.add_node("x", fn)
+    nodes are already keyed by "x" itself. Confirmed empirically, not
+    assumed: every LangGraph node's own `.name` attribute equals its dict
+    key exactly (so preferring `.name` is a no-op there), while an LCEL
+    chain's `.name` is the readable thing the opaque key hides (a wrapped
+    function's own name for a RunnableLambda, the component's class name
+    otherwise) -- `chain = prompt | RunnableLambda(fake_llm) | parser`
+    reports `fake_llm`, not a hash, once this map is applied.
+
+    A plain Runnable's graph also has exactly two nodes LangGraph's never
+    does: an auto-generated input-schema and output-schema marker at the
+    two ends of the whole chain (confirmed empirically: `node.data` is the
+    Pydantic model *class* itself for these two, a real component
+    *instance* for every other node) -- noise, not a step anyone wrote,
+    so this maps them to None and the caller drops them and anything that
+    only ever touched them.
+
+    Collisions (two sibling steps that both report the same `.name`, e.g.
+    two bare `ChatPromptTemplate()` calls in one chain with no wrapping
+    function to disambiguate) get a numeric suffix so nothing silently
+    overwrites a sibling in the `nodes` dict below.
+    """
+    seen: dict[str, int] = {}
+    mapping: dict[str, str | None] = {}
+    for node_id, node in drawable.nodes.items():
+        if isinstance(node.data, type):
+            mapping[node_id] = None
+            continue
+        name = node.name or node_id
+        seen[name] = seen.get(name, 0) + 1
+        mapping[node_id] = name if seen[name] == 1 else f"{name}_{seen[name]}"
+    return mapping
+
+
 def main() -> int:
     repo_path, module_file, attr = sys.argv[1], sys.argv[2], sys.argv[3]
 
@@ -189,9 +226,13 @@ def main() -> int:
     try:
         compiled = _load_attr(module_file, attr)
         drawable = compiled.get_graph()
+        rename = _rename_map(drawable)
 
         nodes = {}
-        for name, node in drawable.nodes.items():
+        for node_id, node in drawable.nodes.items():
+            name = rename[node_id]
+            if name is None:  # a plain Runnable's input/output schema marker
+                continue
             try:
                 nodes[name] = _describe_node(node)
             except Exception as exc:  # one bad node must not sink the ingest
@@ -200,12 +241,13 @@ def main() -> int:
 
         edges = [
             {
-                "source": edge.source,
-                "target": edge.target,
+                "source": rename[edge.source],
+                "target": rename[edge.target],
                 "conditional": bool(getattr(edge, "conditional", False)),
                 "data": getattr(edge, "data", None) if isinstance(getattr(edge, "data", None), str) else None,
             }
             for edge in drawable.edges
+            if rename[edge.source] is not None and rename[edge.target] is not None
         ]
 
         json.dump({"ok": True, "nodes": nodes, "edges": edges, "attr": attr}, sys.stdout)

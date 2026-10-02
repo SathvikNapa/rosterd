@@ -181,6 +181,31 @@ def _compiled_assignments(path: Path) -> list[str]:
     return names
 
 
+def _lcel_assignments(path: Path) -> list[str]:
+    """Top-level names assigned from an LCEL `|`-composed expression
+    (`chain = prompt | llm | parser`) -- the other half of "a compiled
+    thing worth introspecting" this tier looks for. A plain LangChain
+    Runnable never calls `.compile()` at all (that's a LangGraph-specific
+    step), so `_compiled_assignments` alone misses every pure-LCEL repo
+    that doesn't also happen to use one of the conventional names tier 4
+    checks. `ast.BitOr` is `|`'s AST node regardless of what the operands
+    actually are -- this can't verify they're real Runnables without
+    importing them, same honest limit `_compiled_assignments` already has
+    for `.compile()` on an arbitrary object. `_run_worker`'s own
+    `hasattr(obj, "get_graph")` check is still what actually confirms it,
+    same as it already does for every other tier here.
+    """
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8", errors="replace"))
+    except (SyntaxError, ValueError, OSError):
+        return []
+    names: list[str] = []
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and isinstance(node.value, ast.BinOp) and isinstance(node.value.op, ast.BitOr):
+            names.extend(t.id for t in node.targets if isinstance(t, ast.Name))
+    return names
+
+
 def locate_graph(repo: Path, settings: Settings) -> GraphLocation:
     """Find the compiled graph, cheapest and most explicit signal first."""
     # 1. Operator override.
@@ -207,7 +232,8 @@ def locate_graph(repo: Path, settings: Settings) -> GraphLocation:
             if found:
                 return found
 
-    # 3. A top-level `X = something.compile()` in a conventional module.
+    # 3. A top-level `X = something.compile()` (LangGraph) or `X = a | b | c`
+    # (plain LangChain LCEL -- never calls .compile() at all) in any module.
     searched = [repo / rel for rel in _CANDIDATE_FILES]
     searched += [p for p in astscan.iter_python_files(repo) if p not in searched]
     for path in searched:
@@ -215,6 +241,8 @@ def locate_graph(repo: Path, settings: Settings) -> GraphLocation:
             continue
         for name in _compiled_assignments(path):
             return GraphLocation(str(path), name, f"compile() assignment in {path.name}", project_root=path.parent)
+        for name in _lcel_assignments(path):
+            return GraphLocation(str(path), name, f"LCEL ('|') assignment in {path.name}", project_root=path.parent)
 
     # 4. A conventional name in a conventional file.
     for rel in _CANDIDATE_FILES:
@@ -237,7 +265,7 @@ def locate_graph(repo: Path, settings: Settings) -> GraphLocation:
                 return GraphLocation(str(path), attr, f"conventional name in {rel}", project_root=path.parent)
 
     raise GraphNotFoundError(
-        "No compiled LangGraph graph found. Add a langgraph.json, or set "
+        "No LangGraph graph or LangChain Runnable found. Add a langgraph.json, or set "
         "ROSTERD_GRAPH_SPEC to 'path/to/module.py:attr'.",
         looked_for=[str(p) for p in _CANDIDATE_FILES],
     )

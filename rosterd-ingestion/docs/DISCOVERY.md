@@ -10,18 +10,22 @@ Turning a repo into a list of agents is two passes over the same code, because n
 
 Both run on every ingest in `import` mode and the results are merged. Setting `ROSTERD_DISCOVERY_MODE=static` runs only the second, which never executes target code.
 
-## Locating the compiled graph
+## Locating the graph — LangGraph, or plain LangChain
+
+What's actually being located is anything with a `get_graph()` method — and that's a **LangChain Core `Runnable` method**, not a LangGraph-specific one. Every LCEL chain (`prompt | llm | parser`, built with no LangGraph import at all) has one too, since `CompiledGraph` is itself just a `Runnable`. So a repo doesn't need LangGraph to be discoverable; it needs *something* that exposes `get_graph()`.
 
 In order, stopping at the first hit:
 
 1. `ROSTERD_GRAPH_SPEC`, e.g. `src/graph.py:workflow` — the operator override.
-2. `langgraph.json`, the manifest the LangGraph CLI itself uses. Its `graphs` map points at `./agent.py:graph`.
-3. A top-level `X = <something>.compile(...)` assignment in a conventional module (`agent.py`, `graph.py`, `main.py`, `app.py`, `workflow.py`, and `src/`/`app/` variants), then anywhere else in the repo.
+2. `langgraph.json`, the manifest the LangGraph CLI itself uses. Its `graphs` map points at `./agent.py:graph`. LangGraph-specific — a plain LangChain repo won't have one, so this tier is simply skipped for it.
+3. A top-level assignment in a conventional module (`agent.py`, `graph.py`, `main.py`, `app.py`, `workflow.py`, and `src/`/`app/` variants), then anywhere else in the repo, matching either `X = <something>.compile(...)` (LangGraph) or `X = a | b | c` (plain LangChain LCEL — a Runnable never calls `.compile()` at all).
 4. A conventional attribute name (`graph`, `app`, `workflow`, `agent`, `compiled_graph`, `chain`) assigned in a conventional module.
 
-Steps 2–4 read the file with `ast.parse`, so locating the graph never runs anything. Only step "now import it" does.
+Steps 2–4 read the file with `ast.parse`, so locating the graph never runs anything — including step 3's LCEL check, which recognizes the `|` operator syntactically and can't verify the operands are real Runnables without importing them. That verification is what step "now import it" actually does, the same way it already does for an arbitrary `.compile()` target.
 
 The loader also accepts an uncompiled `StateGraph` builder or a zero-argument factory that returns one, and compiles or calls it — a repo that exports `build_graph` rather than `graph` still works.
+
+**Node names, either way.** A LangGraph node is already keyed by whatever name `add_node("x", fn)` gave it. A plain LCEL chain's nodes are not — `get_graph()` auto-generates an opaque hex id for each step, since nothing in LCEL ever names them. Discovery prefers each node's own `.name` (confirmed empirically: equals the LangGraph key exactly when there is one, so this is a no-op there; for LCEL it's a wrapped function's own name, or the component's class name) and drops the two auto-generated input/output schema nodes LCEL adds at the edges of the whole chain — `_introspect_worker.py`'s `_rename_map` is where this lives.
 
 ## Why the import runs in a subprocess
 
@@ -54,7 +58,7 @@ A docstring is only trusted when its source file is **inside the cloned repo**. 
 
 Structure is read from a graph compiled at import time. A graph assembled per-request, or one whose nodes depend on runtime configuration, is discovered as it looked at import.
 
-Static mode cannot see dynamically added nodes at all — it reports what `add_node(...)` calls appear in the source, and warns that its results are inferred.
+Static mode cannot see dynamically added nodes at all — it reports what `add_node(...)` calls appear in the source, and warns that its results are inferred. It's also LangGraph-only, by nature of what's reliably AST-discoverable: `add_node()`/`add_edge()`/`add_conditional_edges()` are declarative builder calls, greppable on sight, where LCEL's `|` is just operator overloading on arbitrary expressions — recognizing *that* an assignment is an LCEL chain is cheap (see locating-the-graph tier 3 above), but recovering its *tools and structure* without ever running it is not, so `ROSTERD_DISCOVERY_MODE=static` on a plain-LangChain repo with no LangGraph in it at all will find nothing and say so, honestly, rather than guess. `import` mode (the default) has no such limit — it runs the real chain's own `get_graph()`.
 
 Tool attribution is name-based. A tool reached through an alias, a registry lookup, or a variable that is never spelled out will be missed; declare it in `constraints.yaml`.
 

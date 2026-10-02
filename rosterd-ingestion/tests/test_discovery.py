@@ -106,6 +106,46 @@ def test_falls_back_to_a_compile_assignment_without_langgraph_json(settings, mak
     assert result.agent_nodes == ["triage_node", "refund_node"]
 
 
+def test_a_plain_langchain_lcel_chain_is_discovered_with_no_langgraph_at_all(settings, make_repo):
+    """Not every real repo is LangGraph: a plain LCEL chain (`a | b | c`,
+    LangChain Core's own composition, used with no LangGraph import, no
+    langgraph.json, no .compile() call, and an arbitrary variable name
+    none of the conventional-attr heuristics would catch) is still found,
+    via the LCEL ('|') assignment tier, and its nodes come back readable
+    (the wrapped function's own name, or the component's class name) --
+    never the opaque hash .get_graph() auto-generates for an un-named
+    Runnable step. Confirmed empirically against a real langchain-core
+    chain before this test was written, not assumed."""
+    _, path = make_repo(
+        "plain-lcel",
+        {
+            "pipeline.py": (
+                "from langchain_core.prompts import ChatPromptTemplate\n"
+                "from langchain_core.runnables import RunnableLambda\n"
+                "from langchain_core.output_parsers import StrOutputParser\n"
+                "\n"
+                "def classify(payload):\n"
+                "    '''Classifies the incoming request.'''\n"
+                "    return 'standard'\n"
+                "\n"
+                "my_totally_arbitrary_pipeline_name = (\n"
+                "    ChatPromptTemplate.from_template('Classify: {text}')\n"
+                "    | RunnableLambda(classify)\n"
+                "    | StrOutputParser()\n"
+                ")\n"
+            )
+        },
+    )
+    result = discovery.discover(path, settings)
+    assert "LCEL" in result.graph_attr
+    assert result.agent_nodes == ["ChatPromptTemplate", "classify", "StrOutputParser"]
+    assert result.nodes["classify"].purpose == "Classifies the incoming request."
+    assert {(e.source, e.target) for e in result.graph.edges} == {
+        ("ChatPromptTemplate", "classify"),
+        ("classify", "StrOutputParser"),
+    }
+
+
 def test_graph_spec_override_wins(settings, make_repo, monkeypatch):
     _, path = make_repo("override", {"custom/place.py": SIMPLE_AGENT})
     monkeypatch.setenv("ROSTERD_GRAPH_SPEC", "custom/place.py:graph")
