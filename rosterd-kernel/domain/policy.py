@@ -22,7 +22,7 @@ from __future__ import annotations
 import logging
 import threading
 
-from kernel import PolicyUpdateRequest
+from domain.kernel import PolicyUpdateRequest
 
 logger = logging.getLogger("rosterd.kernel.policy")
 

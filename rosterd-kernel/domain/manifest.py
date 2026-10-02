@@ -24,7 +24,13 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, field_validator
 
-from legacy_constraints import adapt_legacy_constraints, is_legacy_shape
+# NOTE: pragmatic hexagonal exception -- domain importing an adapter.
+# The textbook-correct fix is to move legacy-shape detection to the
+# ManifestSource adapter boundary (translate before constructing a
+# ManifestDocument at all), but that changes *when* the translation
+# happens relative to this Pydantic validator -- a real behavior change,
+# deliberately deferred rather than bundled into a restructuring pass.
+from adapters.http_out.legacy_constraints import adapt_legacy_constraints, is_legacy_shape
 
 from rosterd_contracts import GraphSpec
 

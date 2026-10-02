@@ -15,10 +15,9 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 
-from docker_backend import DockerBackend
-from kernel import AgentInstance
-from registry import InstanceRegistry
-from postgres import AgentRow, StateWriter
+from domain.kernel import AgentInstance
+from domain.ports import AgentRow, DockerBackend, StateWriter
+from domain.registry import InstanceRegistry
 
 logger = logging.getLogger("rosterd.kernel.killer")
 

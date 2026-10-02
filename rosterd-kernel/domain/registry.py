@@ -10,7 +10,7 @@ from __future__ import annotations
 import threading
 from collections import Counter
 
-from kernel import AgentInstance, InstanceStatus
+from domain.kernel import AgentInstance, InstanceStatus
 
 
 class InstanceRegistry:

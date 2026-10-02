@@ -130,26 +130,34 @@ discipline as `rosterd-ingestion`'s own `/healthz` / `/manifests`.
 
 ## Layout
 
+Hexagonal, same convention every rosterd service shares (see the root
+README's "Architecture" section): `domain/` (pure logic + wire contracts
++ `ports.py`) → `application/` (orchestration, depends on ports) →
+`adapters/` (concrete implementations) → `main.py` (thin entrypoint).
+
 | File | Purpose |
 | --- | --- |
-| `shared.py`, `kernel.py` | Wire contract, verbatim from the brief |
-| `manifest.py` | The confirmed-manifest shapes (`AgentManifestEntry`, `ConstraintRule`, `ScalingPolicy`) + `ManifestIndex` |
-| `legacy_constraints.py` | Stopgap: adapts ingestion's real dict-shaped `constraints` into `ConstraintRule`s |
-| `manifest_source.py` | Where the manifest comes from — polls ingestion today, see "Notes for the team" |
-| `demo_agent_client.py`, `coordinator_client.py` | Clients for Shruti's `/invoke` and Joy's `/events` |
-| `postgres.py` | `AgentRow` / `AgentMetricsRow` + the writer (logs, or upserts/inserts into the real `rosterd-postgres` schema) |
-| `constraints.py` | `evaluate_rule` / `evaluate_all` — the generic field/op/value engine |
-| `budget.py` | Tool-call-count / elapsed-time tracking per `run_id` |
-| `registry.py` | The instance pool (`instances: dict[str, list[AgentInstance]]`) + queue counters |
-| `docker_backend.py` | Simulated (default) and real (Docker SDK) instance-pool control |
-| `killer.py` | The kill switch, shared by dispatch and the scaler |
-| `policy.py` | In-memory overrides from `POST /policy` |
-| `run_store.py` | In-memory run tracking; `killed` is sticky (see its docstring) |
-| `tracing.py` | OTel wrapper — every span/metric call degrades to a no-op if the SDK/collector isn't there |
-| `scaler.py` | `compute_desired_replicas` (pure) + the background scaler loop |
-| `dispatch.py` | The `/dispatch` pipeline |
-| `simulate.py` | `POST /agents/{id}/simulate-load` |
-| `app.py` | FastAPI wiring — `create_app()` factory + the `Container` composition root |
+| `domain/kernel.py` | Wire contract, verbatim from the brief (shared types come from `rosterd-contracts`, see `../libs/rosterd-contracts/`) |
+| `domain/manifest.py` | The confirmed-manifest shapes (`AgentManifestEntry`, `ConstraintRule`, `ScalingPolicy`) + `ManifestIndex` |
+| `domain/constraints.py` | `evaluate_rule` / `evaluate_all` — the generic field/op/value engine |
+| `domain/budget.py` | Tool-call-count / elapsed-time tracking per `run_id` |
+| `domain/registry.py` | The instance pool (`instances: dict[str, list[AgentInstance]]`) + queue counters |
+| `domain/policy.py` | In-memory overrides from `POST /policy` |
+| `domain/run_store.py` | In-memory run tracking; `killed` is sticky (see its docstring) |
+| `domain/ports.py` | The `DockerBackend`, `ManifestSource`, `StateWriter` Protocols application code depends on, plus the `AgentRow`/`AgentMetricsRow` Postgres row shapes |
+| `application/dispatch.py` | The `/dispatch` pipeline |
+| `application/scaler.py` | `compute_desired_replicas` (pure) + the background scaler loop |
+| `application/killer.py` | The kill switch, shared by dispatch and the scaler |
+| `application/simulate.py` | `POST /agents/{id}/simulate-load` |
+| `adapters/http_out/legacy_constraints.py` | Stopgap: adapts ingestion's real dict-shaped `constraints` into `ConstraintRule`s |
+| `adapters/http_out/manifest_source.py` | Where the manifest comes from — polls ingestion today, see "Notes for the team" |
+| `adapters/http_out/demo_agent_client.py`, `coordinator_client.py` | Clients for the demo-agent's `/invoke` and the coordinator's `/events` |
+| `adapters/docker/docker_backend.py` | Simulated (default) and real (Docker SDK) instance-pool control |
+| `adapters/postgres/postgres.py` | The `StateWriter` implementations (logs, or upserts/inserts into the real `rosterd-postgres` schema) |
+| `adapters/llm/reviewer.py` | The second, autonomous reviewer agent deciding paused runs |
+| `adapters/observability/tracing.py` | OTel wrapper — every span/metric call degrades to a no-op if the SDK/collector isn't there |
+| `adapters/http_in/app.py` | FastAPI wiring — `create_app()` factory + the `Container` composition root |
+| `main.py` | Thin entrypoint (`uvicorn main:app`) |
 | `docs/API.md` | curl-able examples for every endpoint |
 
 ## Design decisions worth flagging

@@ -35,17 +35,13 @@ from __future__ import annotations
 
 import logging
 import threading
-from typing import Protocol
 
 import httpx
 
-from manifest import ManifestDocument, ManifestIndex, ManifestStatus, ScalingPolicy
+from domain.manifest import ManifestDocument, ManifestIndex, ManifestStatus, ScalingPolicy
+from domain.ports import ManifestSource
 
 logger = logging.getLogger("rosterd.kernel.manifest_source")
-
-
-class ManifestSource(Protocol):
-    def fetch(self) -> ManifestDocument | None: ...
 
 
 class StaticManifestSource:

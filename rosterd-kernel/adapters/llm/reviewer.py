@@ -39,8 +39,8 @@ from typing import TYPE_CHECKING, Callable
 from pydantic import BaseModel
 
 if TYPE_CHECKING:
-    from dispatch import Dispatcher
-    from run_store import RunStore
+    from application.dispatch import Dispatcher
+    from domain.run_store import RunStore
 
 logger = logging.getLogger("rosterd.kernel.reviewer")
 

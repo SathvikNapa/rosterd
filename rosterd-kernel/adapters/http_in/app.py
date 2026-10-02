@@ -42,14 +42,22 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from budget import BudgetTracker
+from adapters.docker.docker_backend import build_docker_backend
+from adapters.http_out.coordinator_client import CoordinatorClient
+from adapters.http_out.demo_agent_client import DemoAgentClient
+from adapters.http_out.manifest_source import IngestionPollManifestSource, ManifestSubscription, StaticManifestSource
+from adapters.llm.reviewer import ReviewerLoop
+from adapters.llm.reviewer import llm_key_present as reviewer_llm_key_present
+from adapters.postgres.postgres import build_state_writer
+from adapters.observability.tracing import Telemetry
+from application.dispatch import Dispatcher
+from application.killer import kill as kill_instance
+from application.scaler import ScalerLoop
+from application.simulate import simulate_load
 from config import Settings, get_settings
-from coordinator_client import CoordinatorClient
-from demo_agent_client import DemoAgentClient
-from dispatch import Dispatcher
-from docker_backend import DockerBackend, build_docker_backend
-from errors import AgentNotFoundError, KernelError, RunNotFoundError
-from kernel import (
+from domain.budget import BudgetTracker
+from domain.errors import AgentNotFoundError, KernelError, RunNotFoundError
+from domain.kernel import (
     DispatchRequest,
     HealthResponse,
     InstancesResponse,
@@ -61,18 +69,11 @@ from kernel import (
     ScaleResponse,
     SimulateLoadRequest,
 )
-from killer import kill as kill_instance
-from manifest import ManifestIndex
-from manifest_source import IngestionPollManifestSource, ManifestSource, ManifestSubscription, StaticManifestSource
-from policy import PolicyStore
-from registry import InstanceRegistry
-from reviewer import ReviewerLoop
-from reviewer import llm_key_present as reviewer_llm_key_present
-from run_store import RunStore
-from scaler import ScalerLoop
-from simulate import simulate_load
-from postgres import StateWriter, build_state_writer
-from tracing import Telemetry
+from domain.manifest import ManifestIndex
+from domain.policy import PolicyStore
+from domain.ports import DockerBackend, ManifestSource, StateWriter
+from domain.registry import InstanceRegistry
+from domain.run_store import RunStore
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 logger = logging.getLogger("rosterd.kernel.app")

@@ -6,8 +6,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from reviewer import ReviewDecision, ReviewerLoop
-from run_store import RunStore
+from adapters.llm.reviewer import ReviewDecision, ReviewerLoop
+from domain.run_store import RunStore
 from rosterd_contracts import RunStatus
 
 

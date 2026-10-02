@@ -1,9 +1,9 @@
 """evaluate_rule / evaluate_all: the generic field/op/value engine."""
 from __future__ import annotations
 
-from constraints import evaluate_all, evaluate_rule, resolve_field
-from demo_agent_client import InvokeResponse, ToolCall
-from manifest import ConstraintRule, ConstraintSource, Confidence
+from domain.constraints import evaluate_all, evaluate_rule, resolve_field
+from adapters.http_out.demo_agent_client import InvokeResponse, ToolCall
+from domain.manifest import ConstraintRule, ConstraintSource, Confidence
 
 
 def rule(field, op, value) -> ConstraintRule:

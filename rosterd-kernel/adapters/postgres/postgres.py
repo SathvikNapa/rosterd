@@ -26,44 +26,10 @@ contract the SpacetimeDB-backed writer had.
 from __future__ import annotations
 
 import logging
-from datetime import datetime
-from typing import Protocol
 
-from pydantic import BaseModel
+from domain.ports import AgentMetricsRow, AgentRow, StateWriter
 
 logger = logging.getLogger("rosterd.kernel.postgres")
-
-
-class AgentRow(BaseModel):
-    """One row per running instance."""
-
-    site_id: str
-    agent_id: str
-    instance_id: str
-    name: str
-    status: str  # "idle" | "working" | "killed"
-    updated_at: datetime
-
-
-class AgentMetricsRow(BaseModel):
-    """Written every scaler tick, not just on change."""
-
-    site_id: str
-    agent_id: str
-    timestamp: datetime
-    in_flight_count: int
-    queued_count: int
-    target_concurrency: int
-    current_replicas: int
-    desired_replicas: int
-    min_replicas: int
-    max_replicas: int
-
-
-class StateWriter(Protocol):
-    def write_agent(self, row: AgentRow) -> None: ...
-
-    def write_agent_metrics(self, row: AgentMetricsRow) -> None: ...
 
 
 class LoggingStateWriter:

@@ -34,27 +34,31 @@ import time
 import uuid
 from datetime import datetime, timezone
 
-from budget import BudgetTracker
-from constraints import evaluate_all
-from coordinator_client import CoordinatorClient, EventRequest
-from demo_agent_client import (
+from adapters.http_out.coordinator_client import CoordinatorClient, EventRequest
+from adapters.http_out.demo_agent_client import (
     PENDING_HUMAN_APPROVAL_RE,
     DemoAgentClient,
     DemoAgentError,
     DemoAgentTimeout,
     InvokeResponse,
 )
-from docker_backend import DockerBackend
-from errors import AgentNotFoundError, ManifestNotReadyError, RunNotFoundError, RunNotResumableError
-from kernel import DispatchRequest, DispatchResponse, DispatchStatus, InstanceStatus
-from killer import kill as kill_instance
-from manifest import ManifestIndex
-from policy import PolicyStore
-from registry import InstanceRegistry
-from run_store import RunStore
+# NOTE: pragmatic hexagonal exception -- application importing an adapter
+# directly for cross-cutting observability, same as rosterd-coordinator's
+# app.py. Instrumentation is infrastructure, not swappable business logic;
+# threading it through domain/application layers directly is the standard
+# accepted exception, not an oversight.
+from adapters.observability.tracing import mark_violation
+from application.killer import kill as kill_instance
+from domain.budget import BudgetTracker
+from domain.constraints import evaluate_all
+from domain.errors import AgentNotFoundError, ManifestNotReadyError, RunNotFoundError, RunNotResumableError
+from domain.kernel import DispatchRequest, DispatchResponse, DispatchStatus, InstanceStatus
+from domain.manifest import ManifestIndex
+from domain.policy import PolicyStore
+from domain.ports import AgentRow, DockerBackend, StateWriter
+from domain.registry import InstanceRegistry
+from domain.run_store import RunStore
 from rosterd_contracts import RunStatus, Violation
-from postgres import AgentRow, StateWriter
-from tracing import mark_violation
 
 logger = logging.getLogger("rosterd.kernel.dispatch")
 

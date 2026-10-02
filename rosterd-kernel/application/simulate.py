@@ -17,8 +17,8 @@ import threading
 import time
 import uuid
 
-from dispatch import Dispatcher
-from kernel import DispatchRequest, SimulateLoadRequest, SimulateLoadResponse, TaskSpec
+from application.dispatch import Dispatcher
+from domain.kernel import DispatchRequest, SimulateLoadRequest, SimulateLoadResponse, TaskSpec
 
 logger = logging.getLogger("rosterd.kernel.simulate")
 

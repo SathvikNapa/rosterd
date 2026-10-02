@@ -30,19 +30,11 @@ import itertools
 import logging
 import uuid
 from datetime import datetime, timezone
-from typing import Protocol
 
-from kernel import AgentInstance, InstanceStatus
+from domain.kernel import AgentInstance, InstanceStatus
+from domain.ports import DockerBackend
 
 logger = logging.getLogger("rosterd.kernel.docker_backend")
-
-
-class DockerBackend(Protocol):
-    def start_instance(self, agent_id: str) -> AgentInstance: ...
-
-    def kill_instance(self, instance: AgentInstance) -> None: ...
-
-    def invoke_base_url(self, instance: AgentInstance) -> str: ...
 
 
 class SimulatedDockerBackend:

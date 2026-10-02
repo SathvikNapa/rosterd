@@ -1,7 +1,7 @@
 """compute_desired_replicas: desired = clamp(ceil(load/target), min, max)."""
 from __future__ import annotations
 
-from scaler import compute_desired_replicas
+from application.scaler import compute_desired_replicas
 
 
 def test_zero_load_clamps_to_min_replicas():

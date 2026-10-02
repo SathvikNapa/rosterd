@@ -14,8 +14,15 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from demo_agent_client import InvokeResponse
-from manifest import ConstraintRule
+# NOTE: pragmatic hexagonal exception -- domain importing an adapter.
+# InvokeResponse is a pure wire-contract type (no I/O of its own), but it
+# lives in demo_agent_client.py alongside the concrete HTTP client class
+# it was defined next to before this restructuring. Splitting that file
+# into a contracts half and an adapter half is a real option, just not
+# one bundled into a move-things-not-redesign-them pass -- deferred like
+# the other three documented exceptions in this service.
+from adapters.http_out.demo_agent_client import InvokeResponse
+from domain.manifest import ConstraintRule
 from rosterd_contracts import Violation
 
 _SEGMENT_RE = re.compile(r"^([a-zA-Z_][a-zA-Z0-9_]*)?((?:\[[^\]]+\])*)$")

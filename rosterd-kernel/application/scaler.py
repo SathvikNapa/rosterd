@@ -19,11 +19,11 @@ import math
 import threading
 from datetime import datetime, timezone
 
-from coordinator_client import CoordinatorClient, EventRequest
-from killer import kill as kill_instance
-from manifest import ManifestIndex, ScalingPolicy
-from registry import InstanceRegistry
-from postgres import AgentMetricsRow, AgentRow, StateWriter
+from adapters.http_out.coordinator_client import CoordinatorClient, EventRequest
+from application.killer import kill as kill_instance
+from domain.manifest import ManifestIndex, ScalingPolicy
+from domain.ports import AgentMetricsRow, AgentRow, StateWriter
+from domain.registry import InstanceRegistry
 
 logger = logging.getLogger("rosterd.kernel.scaler")
 
