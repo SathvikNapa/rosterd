@@ -53,6 +53,12 @@ The one deliberately shared piece is [`libs/rosterd-contracts`](libs/rosterd-con
 …) every service's domain layer depends on, as one real installed package
 instead of four hand-copied files.
 
+## Prerequisites
+
+- [Docker](https://docs.docker.com/get-docker/) ≥ 24 and Docker Compose V2
+- [Python](https://www.python.org/) ≥ 3.11 (for running services standalone or tests)
+- [Node.js](https://nodejs.org/) ≥ 20 and npm (for the frontend)
+
 ## Quick start
 
 ```bash
@@ -78,6 +84,12 @@ run build` for the frontend).
 See [CONTRIBUTING.md](CONTRIBUTING.md) for local setup, the test workflow,
 and where new code belongs under the hexagonal layout above. This project
 follows the [Contributor Covenant](CODE_OF_CONDUCT.md).
+
+## Contributors
+
+<!-- Add yourself here! Format: [Name](GitHub profile) -->
+- [Sathvik Napa](https://github.com/SathvikNapa) — creator
+- [Param Chawla](https://github.com/anonymous2912) — contributor
 
 ## License
 
