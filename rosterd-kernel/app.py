@@ -71,7 +71,7 @@ from reviewer import llm_key_present as reviewer_llm_key_present
 from run_store import RunStore
 from scaler import ScalerLoop
 from simulate import simulate_load
-from spacetime import SpacetimeWriter, build_spacetime_writer
+from postgres import StateWriter, build_state_writer
 from tracing import Telemetry
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -86,7 +86,7 @@ class Container:
     manifest_subscription: ManifestSubscription
     registry: InstanceRegistry
     docker_backend: DockerBackend
-    spacetime_writer: SpacetimeWriter
+    state_writer: StateWriter
     budget_tracker: BudgetTracker
     policy_store: PolicyStore
     run_store: RunStore
@@ -105,7 +105,7 @@ def build_container(
     *,
     manifest_source: ManifestSource | None = None,
     docker_backend: DockerBackend | None = None,
-    spacetime_writer: SpacetimeWriter | None = None,
+    state_writer: StateWriter | None = None,
 ) -> Container:
     """The composition root. Every collaborator below is overridable purely
     for tests -- production always calls this with only `settings`."""
@@ -113,7 +113,7 @@ def build_container(
     manifest_index = ManifestIndex()
     registry = InstanceRegistry()
     docker_backend = docker_backend or build_docker_backend(settings)
-    spacetime_writer = spacetime_writer or build_spacetime_writer(settings)
+    state_writer = state_writer or build_state_writer(settings)
     budget_tracker = BudgetTracker(settings)
     policy_store = PolicyStore()
     run_store = RunStore()
@@ -131,7 +131,7 @@ def build_container(
         run_store=run_store,
         telemetry=telemetry,
         policy_store=policy_store,
-        spacetime_writer=spacetime_writer,
+        state_writer=state_writer,
     )
 
     source = manifest_source or (
@@ -143,7 +143,7 @@ def build_container(
         manifest_index=manifest_index,
         registry=registry,
         docker_backend=docker_backend,
-        spacetime_writer=spacetime_writer,
+        state_writer=state_writer,
         coordinator_client=coordinator_client,
         budget_tracker=budget_tracker,
         telemetry=telemetry,
@@ -165,7 +165,7 @@ def build_container(
         manifest_subscription=manifest_subscription,
         registry=registry,
         docker_backend=docker_backend,
-        spacetime_writer=spacetime_writer,
+        state_writer=state_writer,
         budget_tracker=budget_tracker,
         policy_store=policy_store,
         run_store=run_store,
@@ -252,7 +252,7 @@ def create_app(settings: Settings | None = None, *, container: Container | None 
                 reason="manual_kill",
                 registry=container.registry,
                 docker_backend=container.docker_backend,
-                spacetime_writer=container.spacetime_writer,
+                state_writer=container.state_writer,
                 settings=settings,
             )
         container.run_store.force_kill(run_id, reason="manual kill requested via POST /runs/{run_id}/kill")
@@ -304,7 +304,7 @@ def create_app(settings: Settings | None = None, *, container: Container | None 
                     reason="manual_scale",
                     registry=container.registry,
                     docker_backend=container.docker_backend,
-                    spacetime_writer=container.spacetime_writer,
+                    state_writer=container.state_writer,
                     settings=settings,
                 )
         return ScaleResponse(agent_id=agent_id, replicas=container.registry.current_replicas(agent_id))

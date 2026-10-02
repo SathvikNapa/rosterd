@@ -5,7 +5,7 @@ import pytest
 
 from errors import ManifestNotFoundError
 from ingestion import AgentManifestEntry
-from shared import GraphSpec
+from rosterd_contracts import GraphSpec
 from store import ManifestStore, compute_manifest_id, lineage_id_for
 
 

@@ -68,7 +68,7 @@ curl -s -X POST localhost:8100/agents/fulfillment/simulate-load \
 ```
 
 Then watch `GET /agents/fulfillment/instances` (or the `rosterd.agent.*`
-OTel gauges / the Monitor screen's SpacetimeDB subscription) climb and
+OTel gauges / the Monitor screen's live subscription) climb and
 settle back down.
 
 ## Health / debug

@@ -39,16 +39,16 @@ Usage:
         --seconds 6 --burst 15 --interval 1.0 --rate 8 \\
         --agents order_intake catalog fulfillment payment
 
-agent_metrics lives in SpacetimeDB, not a kernel endpoint, so by default
+agent_metrics lives in Postgres, not a kernel endpoint, so by default
 this script just drives the load and leaves watching it to the caller
-(`spacetime sql rosterd --server http://localhost:3000 "SELECT * FROM
-agent_metrics"`, or the Monitor screen). Pass --watch to have it also tail
-agent_metrics itself for the agents being loaded, if the `spacetime` CLI
-is on PATH.
+(`psql $ROSTERD_KERNEL_POSTGRES_DSN -c "SELECT * FROM agent_metrics"`, or
+the Monitor screen). Pass --watch to have it also tail agent_metrics
+itself for the agents being loaded, if the `psql` CLI is on PATH.
 """
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 import subprocess
 import sys
@@ -113,20 +113,20 @@ def _latest_row_per_agent(sql_output: str, agents: list[str]) -> dict[str, str]:
     return {agent: line for agent, (_, line) in best.items()}
 
 
-def watch_spacetime(agents: list[str], module: str, server: str, seconds: float) -> None:
-    if shutil.which("spacetime") is None:
-        print("`spacetime` CLI not on PATH -- skipping the live watch; query agent_metrics yourself.", file=sys.stderr)
+def watch_postgres(agents: list[str], dsn: str, seconds: float) -> None:
+    if shutil.which("psql") is None:
+        print("`psql` CLI not on PATH -- skipping the live watch; query agent_metrics yourself.", file=sys.stderr)
         return
     deadline = time.monotonic() + seconds + 3  # a little past the load to catch the scale-up landing
     last_printed: dict[str, str] = {}
     while time.monotonic() < deadline:
         try:
             out = subprocess.run(
-                ["spacetime", "sql", module, "--server", server, "SELECT * FROM agent_metrics"],
+                ["psql", dsn, "-c", "SELECT * FROM agent_metrics"],
                 capture_output=True, text=True, timeout=10,
             ).stdout
         except Exception as exc:  # noqa: BLE001 - a watch failure shouldn't kill the load test
-            print(f"(spacetime sql failed: {exc})", file=sys.stderr)
+            print(f"(psql failed: {exc})", file=sys.stderr)
             time.sleep(1)
             continue
         for agent_id, line in _latest_row_per_agent(out, agents).items():
@@ -152,9 +152,11 @@ def main() -> int:
         "0 means unthrottled (all of --burst spawned as fast as the kernel can loop, which is "
         "what pegged a machine at the old defaults; see the module docstring before raising this).",
     )
-    parser.add_argument("--watch", action="store_true", help="Tail agent_metrics via the spacetime CLI while loading.")
-    parser.add_argument("--spacetime-module", default="rosterd")
-    parser.add_argument("--spacetime-server", default="http://localhost:3000")
+    parser.add_argument("--watch", action="store_true", help="Tail agent_metrics via the psql CLI while loading.")
+    parser.add_argument(
+        "--postgres-dsn",
+        default=os.environ.get("ROSTERD_KERNEL_POSTGRES_DSN", "postgresql://rosterd:rosterd@localhost:5432/rosterd"),
+    )
     args = parser.parse_args()
 
     print(
@@ -165,8 +167,8 @@ def main() -> int:
     watcher = None
     if args.watch:
         watcher = threading.Thread(
-            target=watch_spacetime,
-            args=(args.agents, args.spacetime_module, args.spacetime_server, args.seconds),
+            target=watch_postgres,
+            args=(args.agents, args.postgres_dsn, args.seconds),
             daemon=True,
         )
         watcher.start()

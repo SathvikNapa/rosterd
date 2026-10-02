@@ -1,7 +1,6 @@
 /**
  * Every service URL in one place. Defaults match docker-compose.yml plus
- * ingestion's ./scripts/run.sh (ingestion is not in compose yet — see
- * TeamPieces/rosterd-param-frontend.md "What's running").
+ * ingestion's ./scripts/run.sh (ingestion is not wired into compose yet).
  */
 
 const env = import.meta.env;
@@ -14,9 +13,10 @@ export const config = {
   ingestionUrl: str(env.VITE_INGESTION_URL, 'http://localhost:8000'),
   kernelUrl: str(env.VITE_KERNEL_URL, 'http://localhost:8100'),
   coordinatorUrl: str(env.VITE_COORDINATOR_URL, 'http://localhost:8300'),
-  /** SpacetimeDB HTTP origin. The websocket URL is derived from it. */
-  spacetimeUrl: str(env.VITE_SPACETIMEDB_URL, 'http://localhost:3000'),
-  spacetimeModule: str(env.VITE_SPACETIMEDB_MODULE, 'rosterd'),
+  /** The coordinator's live-relay WebSocket (adapters/http_in/live_ws.py) --
+   * Postgres LISTEN/NOTIFY, relayed, since a browser can't open a raw
+   * Postgres connection itself. */
+  coordinatorWsUrl: str(env.VITE_COORDINATOR_WS_URL, 'ws://localhost:8300/ws'),
   jaegerBaseUrl: str(env.VITE_JAEGER_BASE_URL, 'http://localhost:16686'),
   /** The site this UI drives. The kernel in compose is `site-a`. */
   siteId: str(env.VITE_SITE_ID, 'site-a'),
@@ -27,7 +27,8 @@ export const config = {
    *           `docker compose up` has finished.
    */
   mode: str(env.VITE_ROSTERD_MODE, 'live') as 'live' | 'demo',
-  /** Poll interval for the SpacetimeDB HTTP-SQL fallback, milliseconds. */
+  /** Poll interval for the coordinator-REST fallback, milliseconds (used
+   * only when the live WebSocket itself can't connect). */
   pollIntervalMs: Number(str(env.VITE_POLL_INTERVAL_MS, '2000')),
 };
 
@@ -37,8 +38,4 @@ export const isDemo = config.mode === 'demo';
 export function traceUrl(traceId: string | null | undefined): string | null {
   if (!traceId) return null;
   return `${config.jaegerBaseUrl}/trace/${traceId}`;
-}
-
-export function spacetimeWsUrl(): string {
-  return config.spacetimeUrl.replace(/^http/, 'ws');
 }

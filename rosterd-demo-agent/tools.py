@@ -10,12 +10,15 @@ from pydantic import BaseModel, Field
 
 class ReserveInventoryArgs(BaseModel):
     sku: str
-    qty: int = Field(le=50)  # fixed sane cap; not modeling live stock
+    # gt=0, not just le=50: found live -- "reserve -4 units" had nothing
+    # rejecting a negative quantity, so it silently "succeeded" as a
+    # negative reservation. The upper cap was never the only bound needed.
+    qty: int = Field(gt=0, le=50)  # fixed sane cap; not modeling live stock
 
 
 class IssueRefundArgs(BaseModel):
     order_id: str
-    amount: float = Field(le=100)
+    amount: float = Field(gt=0, le=100)
 
 
 class CheckStockArgs(BaseModel):
@@ -24,7 +27,8 @@ class CheckStockArgs(BaseModel):
 
 class ChargePaymentArgs(BaseModel):
     order_id: str
-    amount: float = Field(le=2000)  # a new charge can legitimately run higher than a refund cap
+    # a new charge can legitimately run higher than a refund cap, but never <= 0
+    amount: float = Field(gt=0, le=2000)
 
 
 def _reserve_inventory(sku: str, qty: int) -> str:

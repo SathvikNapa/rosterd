@@ -33,7 +33,7 @@ from dataclasses import dataclass, field
 from constraints_loader import ParsedConstraints
 from discovery import DiscoveryResult
 from ingestion import AgentConstraints, AgentManifestEntry
-from shared import GraphSpec
+from rosterd_contracts import GraphSpec
 
 
 @dataclass

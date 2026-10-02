@@ -1,0 +1,62 @@
+/**
+ * Landing (marketing) screen — the one page in the app that renders outside
+ * <AppShell>, so it gets its own small stylesheet instead of borrowing the
+ * app chrome's classes. Colors and type still come from tokens.css; this
+ * file only owns the grid breakpoints, which don't belong as inline style
+ * (no media queries in a style attribute).
+ */
+
+.landing__hero-grid {
+  display: grid;
+  grid-template-columns: 1.08fr 0.92fr;
+  gap: 48px;
+  align-items: center;
+}
+
+.landing__stats-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1px;
+  background: var(--border);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  overflow: hidden;
+}
+
+.landing__feature-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 20px;
+}
+
+.landing__proof-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+}
+
+.landing__feature-card {
+  transition: transform 0.25s var(--ease-out), border-color 0.25s var(--ease-out);
+}
+.landing__feature-card:hover {
+  transform: translateY(-3px);
+  border-color: var(--accent-mid);
+}
+
+@media (max-width: 860px) {
+  .landing__hero-grid {
+    grid-template-columns: 1fr;
+  }
+  .landing__hero-title {
+    font-size: 36px !important;
+  }
+  .landing__stats-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+  .landing__feature-grid {
+    grid-template-columns: 1fr;
+  }
+  .landing__proof-grid {
+    grid-template-columns: 1fr;
+  }
+}

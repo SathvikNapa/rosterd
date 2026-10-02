@@ -6,3 +6,4 @@ pydantic==2.13.5
 pytest==9.1.1
 PyYAML==6.0.3
 uvicorn==0.53.0
+-e ../libs/rosterd-contracts

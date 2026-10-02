@@ -5,9 +5,9 @@ import time
 from datetime import datetime, timezone
 
 from config import Settings
-from coordinator import EventRequest
-from shared import SiteStatus
-from sites import SiteRegistry
+from domain.coordinator import EventRequest
+from rosterd_contracts import SiteStatus
+from domain.sites import SiteRegistry
 
 
 def event(site_id="site-a", status="done", violation=None, **overrides):

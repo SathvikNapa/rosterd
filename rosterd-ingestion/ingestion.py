@@ -4,7 +4,7 @@ Also handles the confirm gate and /ask/parse: a draft manifest governs nothing
 until a human confirms it, and plain language becomes a proposed task.
 
 Scope note: the revised brief also replaces constraints.yaml with inferred
-ConstraintRules and moves storage to SpacetimeDB. Those are deliberately NOT
+ConstraintRules and moves storage to Postgres. Those are deliberately NOT
 here yet — this build adds the two new endpoints on the existing architecture.
 See docs/ADR-002-confirm-gate.md.
 """
@@ -13,7 +13,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, HttpUrl
 
-from shared import GraphSpec, Priority
+from rosterd_contracts import GraphSpec, Priority
 
 
 class ManifestStatus(str, Enum):

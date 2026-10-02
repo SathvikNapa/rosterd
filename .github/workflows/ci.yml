@@ -1,0 +1,84 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  python-tests:
+    name: pytest (${{ matrix.service }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+          - rosterd-kernel
+          - rosterd-coordinator
+          - rosterd-ingestion
+          - rosterd-demo-agent
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies (incl. libs/rosterd-contracts)
+        working-directory: ${{ matrix.service }}
+        run: pip install -r requirements.txt pytest
+      - name: Run tests
+        working-directory: ${{ matrix.service }}
+        run: pytest -q
+
+  contracts-tests:
+    name: pytest (libs/rosterd-contracts)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e libs/rosterd-contracts pytest
+      - run: pytest -q libs/rosterd-contracts
+
+  frontend:
+    name: frontend (typecheck + build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: rosterd-frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: rosterd-frontend/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build
+
+  # Spins up the full docker-compose stack and smoke-tests every health
+  # endpoint. Deliberately NOT run on every PR (7+ containers is slow and
+  # somewhat flaky as a per-PR gate) -- only on pushes to main, or by hand.
+  integration-smoke:
+    name: docker-compose smoke test
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    needs: [python-tests, contracts-tests, frontend]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and start the stack
+        run: docker compose up --build -d
+      - name: Wait for services to come up
+        run: sleep 20
+      - name: Check kernel health
+        run: curl -sf http://localhost:8100/healthz
+      - name: Check coordinator health
+        run: curl -sf http://localhost:8300/healthz
+      - name: Dump logs on failure
+        if: failure()
+        run: docker compose logs
+      - name: Tear down
+        if: always()
+        run: docker compose down -v

@@ -12,7 +12,7 @@ import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from shared import Violation
+from rosterd_contracts import Violation
 
 
 @dataclass

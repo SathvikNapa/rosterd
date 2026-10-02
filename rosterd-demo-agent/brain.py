@@ -65,8 +65,11 @@ _FRAUD = re.compile(r"fraud|chargeback|stolen card|suspicious|card testing", re.
 _MONEY = re.compile(r"\$\s?(\d[\d,]*(?:\.\d+)?)")
 _ORDER = re.compile(r"\b(ORD-\d+)\b", re.I)
 _SKU = re.compile(r"\b(SKU-[A-Z0-9-]+)\b", re.I)
-_QTY_UNITS = re.compile(r"(\d+)\s*(?:x|units?|pcs|pieces|items)\b", re.I)
-_QTY_LABEL = re.compile(r"\bqty\s*[:=]?\s*(\d+)", re.I)
+# `-?` on both: found live -- "reserve -4 units" matched the digits only,
+# silently dropping the sign and parsing as qty=4 instead of -4. That let a
+# nonsense request read as a normal one instead of surfacing as invalid.
+_QTY_UNITS = re.compile(r"(-?\d+)\s*(?:x|units?|pcs|pieces|items)\b", re.I)
+_QTY_LABEL = re.compile(r"\bqty\s*[:=]?\s*(-?\d+)", re.I)
 _OVERRIDE = re.compile(r"manager override|override code|skip the (?:usual )?approval", re.I)
 
 

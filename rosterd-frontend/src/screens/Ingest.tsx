@@ -113,8 +113,7 @@ export function Ingest() {
   // https://github.com/SathvikNapa/rosterd-example is a real, public mirror
   // of rosterd-demo-agent -- a clean `git clone` away, unlike the acme
   // placeholder this used to default to (which doesn't exist and made
-  // ingest fail with repo_fetch_failed on first load). See
-  // TeamPieces/rosterd-param-frontend.md's Ingest gap.
+  // ingest fail with repo_fetch_failed on first load).
   const [repoUrl, setRepoUrl] = useState(session.repoUrl || ROSTERD_EXAMPLE_URL);
   const [constraintsYaml, setConstraintsYaml] = useState(defaultConstraintsFor(repoUrl));
   // Only true once the navigator has typed into the constraints box

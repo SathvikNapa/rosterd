@@ -50,7 +50,7 @@ function buildPool(agentId: string, siteId: string, instances: AgentRow[]): Agen
   return {
     agent_id: agentId,
     site_id: siteId,
-    name: instances.find((row) => row.name)?.name ?? titleize(agentId),
+    name: freshestName(instances) ?? titleize(agentId),
     instances: [...instances].sort((a, b) => a.instance_id.localeCompare(b.instance_id)),
     replicas: live.length,
     working,
@@ -59,6 +59,27 @@ function buildPool(agentId: string, siteId: string, instances: AgentRow[]): Agen
     status,
     updated_at: updated ?? null,
   };
+}
+
+/**
+ * The `agents` table is per-instance and never deletes a row when the
+ * naming scheme underneath it changes (the scaler upserts by instance_id,
+ * and old instance ids are simply never reused) — so a site that has been
+ * running a while can carry rows from an earlier naming generation
+ * alongside current ones. Picking the array's first match is arbitrary and
+ * can surface a long-dead, stale-named instance ahead of the live one.
+ * Prefer a still-live instance, then the most recently updated row, so the
+ * display always reflects what's actually running now.
+ */
+function freshestName(rows: AgentRow[]): string | null {
+  const named = rows.filter((row) => row.name);
+  if (named.length === 0) return null;
+  const ranked = [...named].sort((a, b) => {
+    const liveRank = Number(a.status !== 'killed') - Number(b.status !== 'killed');
+    if (liveRank !== 0) return -liveRank; // live (not killed) first
+    return (b.updated_at ?? '').localeCompare(a.updated_at ?? ''); // most recent first
+  });
+  return ranked[0].name;
 }
 
 /**
@@ -77,7 +98,7 @@ export function orderPools(pools: AgentPool[], order: string[]): AgentPool[] {
 
 /** The `agents` table's own `name` for an agent, falling back to its id. */
 export function agentDisplayName(agents: AgentRow[], agentId: string): string {
-  return agents.find((row) => row.agent_id === agentId && row.name)?.name ?? titleize(agentId);
+  return freshestName(agents.filter((row) => row.agent_id === agentId)) ?? titleize(agentId);
 }
 
 /** Every site id we have seen, from either table, in stable order. */

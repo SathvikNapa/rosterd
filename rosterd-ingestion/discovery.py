@@ -26,7 +26,7 @@ import astscan
 import sandbox
 from config import Settings
 from errors import GraphLoadError, GraphNotFoundError
-from shared import GraphEdge, GraphSpec
+from rosterd_contracts import GraphEdge, GraphSpec
 
 logger = logging.getLogger("rosterd.ingestion.discovery")
 

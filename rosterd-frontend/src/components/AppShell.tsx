@@ -36,23 +36,18 @@ const TRANSPORT_COPY: Record<LiveTransport, { label: string; tone: string; title
   websocket: {
     label: 'Live',
     tone: 'ok',
-    title: 'Subscribed to SpacetimeDB over websocket via generated bindings.',
-  },
-  'sql-poll': {
-    label: 'Polling',
-    tone: 'accent',
-    title: `Reading SpacetimeDB over HTTP SQL every ${config.pollIntervalMs}ms. Run npm run gen:bindings for the websocket subscription.`,
+    title: 'Connected to the coordinator’s live relay (Postgres LISTEN/NOTIFY, over a plain WebSocket).',
   },
   'coordinator-rest': {
     label: 'REST fallback',
     tone: 'warn',
-    title: 'SpacetimeDB is unreachable; reading sites and events from the coordinator.',
+    title: `The live connection is unreachable; polling the coordinator's sites/events every ${config.pollIntervalMs}ms instead.`,
   },
-  connecting: { label: 'Connecting…', tone: 'neutral', title: 'Establishing a connection to SpacetimeDB.' },
+  connecting: { label: 'Connecting…', tone: 'neutral', title: 'Establishing the live connection.' },
   disconnected: {
     label: 'Disconnected',
     tone: 'danger',
-    title: 'Neither SpacetimeDB nor the coordinator is reachable. Every live table is empty.',
+    title: 'Neither the live connection nor the coordinator is reachable. Every live table is empty.',
   },
 };
 

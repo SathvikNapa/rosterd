@@ -5,7 +5,7 @@ import pytest
 
 from ask import derive_criteria, detect_priority, parse_ask, score_agents, tokenize
 from ingestion import AgentConstraints, AgentManifestEntry, Confidence
-from shared import Priority
+from rosterd_contracts import Priority
 
 
 def agent(agent_id, node, purpose="", tools=(), **constraints) -> AgentManifestEntry:

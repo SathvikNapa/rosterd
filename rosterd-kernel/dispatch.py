@@ -52,11 +52,47 @@ from manifest import ManifestIndex
 from policy import PolicyStore
 from registry import InstanceRegistry
 from run_store import RunStore
-from shared import RunStatus, Violation
-from spacetime import AgentRow, SpacetimeWriter
+from rosterd_contracts import RunStatus, Violation
+from postgres import AgentRow, StateWriter
 from tracing import mark_violation
 
 logger = logging.getLogger("rosterd.kernel.dispatch")
+
+#: What `toolrun.attempt_tool` (rosterd-demo-agent) writes into a
+#: `tool_calls[].result` when the args it was actually given fail the
+#: tool's own Pydantic schema (e.g. a negative qty, once a lower bound
+#: exists) -- distinct from a kernel-side manifest-rule violation, which
+#: kills the run. This one doesn't kill anything: the graph still finished
+#: normally, it just tried an invalid value. Kept a string match rather
+#: than a typed field because InvokeResponse/ToolCall (demo_agent_client.py)
+#: are the wire contract every agent's own service returns verbatim --
+#: widening that schema for one kernel-side concern isn't this repo's call.
+_SCHEMA_REJECTED_PREFIX = "REJECTED by tool schema:"
+
+
+def _with_rejection_notice(response: InvokeResponse) -> str:
+    """`response.output` plus one `REJECTED:` line per schema-rejected tool
+    call, in the same convention refund_node.py's prompt-injection markers
+    use (`INJECTED:`/`INJECTION:`) -- a plain-text prefix the frontend
+    already knows how to pull out into its own callout (RunDetail.tsx).
+
+    Without this, a schema rejection was real and tested
+    (test_payment_over_cap_is_recorded_intact_and_rejected_by_schema) but
+    invisible end to end: `tool_calls[].result` never leaves the kernel --
+    RunResponse only carries `output` -- so nobody dispatching from the
+    actual UI ever saw it, they'd just see a run marked "done" with no clue
+    anything was wrong. This is what gives the person a chance to notice
+    and correct their message instead of a silent no-op.
+    """
+    notices = [
+        f"REJECTED: {call.tool} rejected {call.args} -- {call.result.split(_SCHEMA_REJECTED_PREFIX, 1)[1].strip()}. "
+        "Try rephrasing your request with a valid value."
+        for call in response.tool_calls
+        if call.result and call.result.startswith(_SCHEMA_REJECTED_PREFIX)
+    ]
+    if not notices:
+        return response.output
+    return "\n".join([response.output, *notices]) if response.output else "\n".join(notices)
 
 
 class Dispatcher:
@@ -73,7 +109,7 @@ class Dispatcher:
         run_store: RunStore,
         telemetry,
         policy_store: PolicyStore,
-        spacetime_writer: SpacetimeWriter,
+        state_writer: StateWriter,
     ) -> None:
         self._settings = settings
         self._manifest_index = manifest_index
@@ -85,7 +121,7 @@ class Dispatcher:
         self._run_store = run_store
         self._telemetry = telemetry
         self._policy_store = policy_store
-        self._spacetime_writer = spacetime_writer
+        self._state_writer = state_writer
 
     # ------------------------------------------------------------- public
 
@@ -164,7 +200,7 @@ class Dispatcher:
             logger.exception("failed to start instance for %s during dispatch", agent_id)
             return None
         self._registry.add(instance)
-        self._spacetime_writer.write_agent(
+        self._state_writer.write_agent(
             AgentRow(
                 site_id=self._settings.site_id,
                 agent_id=agent_id,
@@ -300,7 +336,9 @@ class Dispatcher:
 
         self._registry.set_status(agent_id, instance.instance_id, InstanceStatus.idle)
         trace_id = self._telemetry.current_trace_id()
-        self._run_store.finish(run_id, status=RunStatus.done, output=response.output, trace_id=trace_id)
+        self._run_store.finish(
+            run_id, status=RunStatus.done, output=_with_rejection_notice(response), trace_id=trace_id
+        )
         self._coordinator_client.post_event(
             EventRequest(
                 site_id=self._settings.site_id,
@@ -396,7 +434,7 @@ class Dispatcher:
             reason=violation.rule if violation else (reason or "manual_kill"),
             registry=self._registry,
             docker_backend=self._docker_backend,
-            spacetime_writer=self._spacetime_writer,
+            state_writer=self._state_writer,
             settings=self._settings,
         )
         if violation is not None:

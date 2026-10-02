@@ -3,9 +3,9 @@ from __future__ import annotations
 
 import httpx
 
-from broadcaster import PolicyBroadcaster
+from adapters.http_out.broadcaster import PolicyBroadcaster
 from config import Settings
-from tracing import Telemetry
+from adapters.observability.tracing import Telemetry
 
 
 class _Response:

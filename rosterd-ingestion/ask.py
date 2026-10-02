@@ -15,7 +15,7 @@ import re
 from dataclasses import dataclass, field
 
 from ingestion import AgentManifestEntry, Confidence, ParsedTask
-from shared import Priority
+from rosterd_contracts import Priority
 
 #: Words that carry no routing signal.
 _STOPWORDS = {

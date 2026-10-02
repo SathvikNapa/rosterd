@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from run_store import RunStore
-from shared import RunStatus
+from rosterd_contracts import RunStatus
 
 
 def test_finish_records_the_outcome():

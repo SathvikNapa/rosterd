@@ -47,6 +47,21 @@ def test_standard_order_routes_to_fulfillment_with_tool_call():
     assert out["tool_calls"][0]["args"] == {"sku": "SKU-LAMP-01", "qty": 3}
 
 
+def test_negative_quantity_is_recorded_intact_and_rejected_by_schema():
+    """Found live: "reserve -4 units of SKU-DEMO" used to silently succeed
+    -- the regex dropped the minus sign (parsed as qty=4), and even a
+    genuine negative would have passed the tool schema, which only ever
+    had an upper bound (le=50). Fixed both: the regex now keeps the sign,
+    and the schema now has gt=0 too, so the actual negative value is
+    recorded as-is (never clamped -- see toolrun.py's own docstring) and
+    the tool schema rejects it, same pattern as a too-large amount."""
+    out = invoke({"entry_node": "order_intake", "input": {"text": "reserve -4 units of SKU-DEMO"}})
+    call = out["tool_calls"][0]
+    assert call["tool"] == "reserve_inventory"
+    assert call["args"]["qty"] == -4  # NOT silently flipped to +4, NOT clamped
+    assert call["result"].startswith("REJECTED")
+
+
 def test_flash_sale_direct_fulfillment():
     out = invoke(scenarios.FLASH_SALE_BURST)
     assert out["tool_calls"][0]["args"] == {"sku": "SKU-SNEAKER-9", "qty": 5}

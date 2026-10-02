@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 from config import Settings
-from patterns import PatternDetector, parse_rule
+from domain.patterns import PatternDetector, parse_rule
 
 
 def now():

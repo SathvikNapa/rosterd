@@ -26,7 +26,7 @@ from pydantic import BaseModel, field_validator
 
 from legacy_constraints import adapt_legacy_constraints, is_legacy_shape
 
-from shared import GraphSpec
+from rosterd_contracts import GraphSpec
 
 
 class ConstraintSource(str, Enum):

@@ -1,6 +1,6 @@
 /**
- * Fixtures for VITE_ROSTERD_MODE=demo — the exact contents of the Figma
- * frames in TeamPieces/Design.html, shaped as real table rows.
+ * Fixtures for VITE_ROSTERD_MODE=demo — the exact contents of the original
+ * design mockup's frames, shaped as real table rows.
  *
  * This is for design review and for demoing the UI before the stack is up.
  * It is never used in live mode: an unreachable service surfaces as an error

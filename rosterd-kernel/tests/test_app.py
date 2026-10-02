@@ -1,6 +1,6 @@
 """End-to-end HTTP contract tests against a real FastAPI app wired to a
 fake docker backend and a monkeypatched demo-agent HTTP call. No Docker
-daemon, no live ingestion/coordinator/SpacetimeDB required.
+daemon, no live ingestion/coordinator/Postgres required.
 """
 from __future__ import annotations
 
@@ -108,6 +108,57 @@ class TestConstraintKill:
         # The offending instance was killed, not returned to idle.
         instances = client.get("/agents/fulfillment/instances").json()["instances"]
         assert instances == []
+
+
+class TestSchemaRejectionSurfacesToOutput:
+    """A tool call whose args fail the *tool's own* schema (e.g. a negative
+    qty, once tools.py has a lower bound) is a different thing from a
+    manifest-rule violation: demo-agent's own toolrun.py already catches it
+    and records `"REJECTED by tool schema: ..."` in that call's `result` --
+    but RunResponse never carried `tool_calls` at all, so nobody dispatching
+    from the actual UI ever saw it. dispatch.py's `_with_rejection_notice`
+    folds it into `output` instead, in the same plain-text-marker convention
+    RunDetail.tsx already parses for prompt-injection lines."""
+
+    def test_a_schema_rejected_tool_call_adds_a_rejected_line_and_still_finishes_done(self, client, fake_demo_agent):
+        fake_demo_agent.set(
+            lambda payload: FakeHttpxResponse(
+                200,
+                {
+                    "output": "Fulfillment attempted to reserve -4 x SKU-DEMO.",
+                    "tool_calls": [
+                        {
+                            "tool": "reserve_inventory",
+                            "args": {"sku": "SKU-DEMO", "qty": -4},
+                            "result": "REJECTED by tool schema: qty Input should be greater than 0",
+                        }
+                    ],
+                },
+            )
+        )
+        response = dispatch(client, text="reserve -4 units of SKU-DEMO")
+        assert response.status_code == 200
+        run_id = response.json()["run_id"]
+
+        run = client.get(f"/runs/{run_id}").json()
+        # Not a manifest-rule violation -- the graph completed normally,
+        # it just tried an invalid value. No kill, no instance loss.
+        assert run["status"] == "done"
+        assert run["violation"] is None
+        assert "REJECTED: reserve_inventory" in run["output"]
+        assert "qty Input should be greater than 0" in run["output"]
+        # The original narrative line survives alongside the notice.
+        assert "Fulfillment attempted to reserve -4 x SKU-DEMO." in run["output"]
+
+    def test_a_normal_response_with_no_rejected_tool_call_is_unchanged(self, client, fake_demo_agent):
+        fake_demo_agent.set(
+            lambda payload: FakeHttpxResponse(
+                200, {"output": "reserved", "tool_calls": [{"tool": "reserve_inventory", "args": {"qty": 3}}]}
+            )
+        )
+        response = dispatch(client)
+        run = client.get(f"/runs/{response.json()['run_id']}").json()
+        assert run["output"] == "reserved"
 
 
 class TestConstraintFollowsTheActualNode:

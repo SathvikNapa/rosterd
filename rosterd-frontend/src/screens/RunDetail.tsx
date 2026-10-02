@@ -32,6 +32,16 @@ import type { RunResponse } from '../lib/types';
  */
 const INJECTION_PREFIX = /^\s*(INJECTED|INJECTION)\s*:\s*/i;
 
+/**
+ * The kernel's own doing (dispatch.py's `_with_rejection_notice`), not the
+ * agent's: a tool call whose args failed the tool's own schema (e.g. a
+ * negative qty) still lets the run finish `done` — nothing to kill, the
+ * graph completed — but the person who typed the request should still find
+ * out their number didn't make sense, not just see a run that quietly did
+ * nothing useful.
+ */
+const REJECTED_PREFIX = /^\s*REJECTED\s*:\s*/i;
+
 export function RunDetail() {
   const { runId = '' } = useParams();
   const session = useSession();
@@ -68,7 +78,7 @@ export function RunDetail() {
 
     poll();
     // The run's own status is REST-only; only its coordinator event lands in
-    // SpacetimeDB, so this one screen polls while the run is still open.
+    // Postgres, so this one screen polls while the run is still open.
     const timer = window.setInterval(poll, config.pollIntervalMs);
     return () => {
       controller.abort();
@@ -150,6 +160,39 @@ export function RunDetail() {
                   </div>
                   <div style={{ fontSize: 14, color: 'var(--text)', lineHeight: 1.5 }}>
                     {line.replace(INJECTION_PREFIX, '')}
+                  </div>
+                </div>
+              ) : REJECTED_PREFIX.test(line) ? (
+                <div
+                  key={index}
+                  style={{
+                    borderRadius: 'var(--r-md)',
+                    background: 'var(--warn-soft)',
+                    border: '1px solid var(--warn-border)',
+                    padding: '14px 16px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 8,
+                  }}
+                >
+                  <div className="row row--between">
+                    <div
+                      style={{
+                        fontSize: 11,
+                        fontWeight: 700,
+                        color: 'var(--warn)',
+                        textTransform: 'uppercase',
+                        letterSpacing: '0.05em',
+                      }}
+                    >
+                      Rejected — not a valid value
+                    </div>
+                    <Link to="/ask" className="linkish" style={{ fontSize: 12, textDecoration: 'none' }}>
+                      Correct and try again →
+                    </Link>
+                  </div>
+                  <div style={{ fontSize: 14, color: 'var(--text)', lineHeight: 1.5 }}>
+                    {line.replace(REJECTED_PREFIX, '')}
                   </div>
                 </div>
               ) : (

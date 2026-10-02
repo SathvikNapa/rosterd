@@ -2,7 +2,7 @@
 
 The control plane UI: ingest a repo, review what was inferred from it, confirm it, ask for work in plain language, and watch the kernel enforce the contract across federated sites.
 
-Built from the seven frames in `TeamPieces/Design.html` against the services that actually exist today (`rosterd-param-frontend.md` is the source of truth for what's really there; `rosterd-joy-coordinator-frontend.md` for what each screen is *for*).
+Built from the original seven-frame design mockup against the services that actually exist today.
 
 ```bash
 npm install
@@ -24,26 +24,18 @@ No backend running? `VITE_ROSTERD_MODE=demo npm run dev` renders every screen fr
 | `/federation` | 7. Federation Dashboard | `sites`, `agents`, `events` | kernel `POST /agents/{id}/simulate-load` |
 | `/monitor` | *(no frame — see below)* | `agent_metrics` | — |
 
-Every write goes through a kernel or ingestion endpoint. The UI never calls a SpacetimeDB reducer.
+Every write goes through a kernel or ingestion endpoint. The UI never writes to Postgres directly.
 
 **Monitor has no Figma frame.** The product spec lists it as a screen, so it is built here in the same design system — live sparkline of load vs replicas, plus the scaling formula spelled out with current numbers, verbatim from `rosterd-kernel/scaler.py`. Every other screen is a direct implementation of its frame.
 
 ## How live data gets here
 
-Three tiers, picked automatically, shown as a pill in the nav bar:
+Two tiers, picked automatically, shown as a pill in the nav bar:
 
-1. **`Live`** — websocket subscription through generated SpacetimeDB bindings.
-2. **`Polling`** — SpacetimeDB HTTP SQL (`POST /v1/database/rosterd/sql`) every 2s. **This is the default**, because the bindings need the `spacetime` CLI to generate and `rosterd-param-frontend.md` flags the browser-subscribe path as unverified.
-3. **`REST fallback`** — coordinator `/sites` and `/events` when SpacetimeDB itself is unreachable. Covers those two tables only; the banner says so.
+1. **`Live`** — a plain WebSocket to the coordinator's live-relay (`GET /ws`, `rosterd-coordinator/adapters/http_in/live_ws.py`), which itself bridges Postgres LISTEN/NOTIFY to the browser (a browser can't open a raw Postgres connection). **This is the default.** On connect it sends one snapshot message per table, then a live message per row as it changes.
+2. **`REST fallback`** — coordinator `/sites` and `/events`, polled, for when the live connection itself can't be reached. Covers those two tables only; the banner says so.
 
-To get tier 1:
-
-```bash
-npm run gen:bindings   # needs: curl -sSf https://install.spacetimedb.com | sh
-npm run dev            # the pill should now read "Live"
-```
-
-`src/module_bindings/` is generated, not checked in. `src/lib/live/bindings.ts` detects it with `import.meta.glob`, so the app builds and runs identically whether or not it exists, and rows from either path go through the same normalizers (`src/lib/live/sql.ts`) — no screen knows which tier it is reading from.
+`src/lib/live/ws.ts` owns tier 1; both tiers' rows go through the same normalizers (`src/lib/live/rows.ts`) — no screen knows which one it is reading from.
 
 ## Configuration
 
@@ -54,8 +46,7 @@ Copy `.env.example` to `.env.local`. Defaults match `docker-compose.yml` plus `r
 | `VITE_INGESTION_URL` | `http://localhost:8000` | not in compose yet — run it separately |
 | `VITE_KERNEL_URL` | `http://localhost:8100` | |
 | `VITE_COORDINATOR_URL` | `http://localhost:8300` | |
-| `VITE_SPACETIMEDB_URL` | `http://localhost:3000` | ws URL is derived from it |
-| `VITE_SPACETIMEDB_MODULE` | `rosterd` | |
+| `VITE_COORDINATOR_WS_URL` | `ws://localhost:8300/ws` | the live-relay WebSocket |
 | `VITE_JAEGER_BASE_URL` | `http://localhost:16686` | `View trace` links point here |
 | `VITE_SITE_ID` | `site-a` | the site this UI drives |
 | `VITE_ROSTERD_MODE` | `live` | `demo` renders the Figma fixtures |
@@ -81,7 +72,7 @@ The frames were drawn against the finished product; some of it isn't built yet. 
 src/
   lib/
     api/          one module per service, typed against its Pydantic models
-    live/         SpacetimeDB: sql.ts (HTTP), bindings.ts (websocket), LiveProvider.tsx, demo.ts
+    live/         ws.ts (WebSocket), rows.ts (row normalizers), LiveProvider.tsx, demo.ts
     types.ts      wire shapes, snake_case, mirrored from the services
     selectors.ts  pools, site rollups, the scaler formula readout
     rules.ts      manifest -> the rule rows Review and Contracts render

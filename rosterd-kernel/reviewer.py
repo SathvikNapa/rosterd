@@ -25,7 +25,7 @@ decision.
 Never crashes the kernel on an LLM hiccup (no key configured, a network
 blip, an unparsable response): denies with a `reviewer.error` reason and
 moves on, the same "fail safe, keep serving" instinct already threaded
-through every other best-effort integration in this service (SpacetimeDB
+through every other best-effort integration in this service (Postgres
 writes, coordinator posts).
 """
 from __future__ import annotations
