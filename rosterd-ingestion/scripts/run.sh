@@ -20,4 +20,4 @@ git -C "$STAGE/demo-agent" -c user.name=rosterd -c user.email=rosterd@local \
     commit --quiet -m "demo-agent: triage/refund/escalation support graph fixture"
 
 export ROSTERD_LOCAL_REPO_ROOT="${ROSTERD_LOCAL_REPO_ROOT:-$(pwd)/$STAGE}"
-exec .venv/bin/python -m uvicorn app:app --reload --port "${PORT:-8000}"
+exec .venv/bin/python -m uvicorn main:app --reload --port "${PORT:-8000}"

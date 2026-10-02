@@ -14,7 +14,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-from ingestion import AgentManifestEntry, Confidence, ParsedTask
+from domain.ingestion import AgentManifestEntry, Confidence, ParsedTask
 from rosterd_contracts import Priority
 
 #: Words that carry no routing signal.

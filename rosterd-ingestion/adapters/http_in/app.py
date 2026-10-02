@@ -23,10 +23,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from config import MANIFEST_SCHEMA_VERSION, get_settings
-from errors import IngestError
-from ask import parse_ask
-from errors import ManifestNotConfirmedError, NoAssignableAgentError
-from ingestion import (
+from domain.ask import parse_ask
+from domain.errors import IngestError, ManifestNotConfirmedError, NoAssignableAgentError
+from domain.ingestion import (
     AskRequest,
     AskResponse,
     ConfirmRequest,
@@ -36,8 +35,8 @@ from ingestion import (
     ManifestResponse,
     ManifestStatus,
 )
-from service import ingest
-from store import ManifestStore, Provenance
+from adapters.filesystem.store import ManifestStore, Provenance
+from application.service import ingest
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 

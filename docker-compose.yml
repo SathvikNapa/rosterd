@@ -169,7 +169,9 @@ services:
   # ---------------------------------------------------------------------
 
   # ingestion:
-  #   build: ./rosterd-ingestion
+  #   build:
+  #     context: .
+  #     dockerfile: rosterd-ingestion/Dockerfile
   #   ports: ["8000:8000"]
   #   networks: [rosterd-backend]
 

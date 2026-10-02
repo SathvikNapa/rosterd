@@ -154,20 +154,30 @@ For a clean, unambiguous success — not just "got further before hitting a diff
 
 ## Layout
 
+Hexagonal: `domain/` (pure logic + wire contracts) -> `application/` (the
+ingest pipeline, discovery's dispatch/merge logic) -> `adapters/` (repo
+cloning, manifest persistence, the sandboxed-subprocess introspection
+workers, the FastAPI boundary) -> `main.py` (thin entrypoint). Same
+convention as `rosterd-kernel`/`rosterd-coordinator`/`rosterd-demo-agent`.
+`config.py` stays at root, same as in the other three services.
+
 | File | Purpose |
 | --- | --- |
-| `ingestion.py` | This service's schema, exactly as specified in the brief (shared types now come from `rosterd-contracts`, see `../libs/rosterd-contracts/`) |
-| `app.py` | FastAPI routes and error handling |
-| `service.py` | The ingest pipeline, end to end |
-| `repo.py` | Cloning, with the safety controls |
-| `discovery.py` | Locating the graph/crew and merging the runtime and static passes; dispatches to LangChain or CrewAI (`is_crewai_repo`) |
-| `sandbox.py` | Fresh-venv dependency install + retry, when the fast import fails on a missing dependency |
-| `_introspect_worker.py` | Subprocess that imports a LangChain Runnable (LangGraph or plain LCEL) and calls `get_graph()` |
-| `crewai_introspect_worker.py` | Subprocess that imports a CrewAI `Crew` and walks its `.agents`/`.tasks` — same `{nodes, edges}` output shape as the worker above |
-| `astscan.py` | AST analysis: tool definitions, tool attribution, node wiring |
-| `constraints_loader.py` | Parsing and validating `constraints.yaml` |
-| `manifest.py` | Merging graph + constraints into `AgentManifestEntry` |
-| `store.py` | Persistence, content addressing, lineage |
+| `domain/ingestion.py` | This service's schema, exactly as specified in the brief (shared types now come from `rosterd-contracts`, see `../libs/rosterd-contracts/`) |
+| `domain/errors.py` | Every expected failure, as a typed exception |
+| `domain/astscan.py` | AST analysis: tool definitions, tool attribution, node wiring |
+| `domain/constraints_loader.py` | Parsing and validating `constraints.yaml` |
+| `domain/manifest.py` | Merging graph + constraints into `AgentManifestEntry` (imports `application/discovery.py`'s `DiscoveryResult` -- a documented pragmatic hexagonal exception) |
+| `domain/ask.py` | Turning plain text into a proposed task |
+| `application/service.py` | The ingest pipeline, end to end |
+| `application/discovery.py` | Locating the graph/crew and merging the runtime and static passes; dispatches to LangChain or CrewAI (`is_crewai_repo`) |
+| `adapters/filesystem/repo.py` | Cloning, with the safety controls |
+| `adapters/filesystem/store.py` | Persistence, content addressing, lineage |
+| `adapters/subprocess_sandbox/sandbox.py` | Fresh-venv dependency install + retry, when the fast import fails on a missing dependency |
+| `adapters/subprocess_sandbox/_introspect_worker.py` | Subprocess that imports a LangChain Runnable (LangGraph or plain LCEL) and calls `get_graph()` |
+| `adapters/subprocess_sandbox/crewai_introspect_worker.py` | Subprocess that imports a CrewAI `Crew` and walks its `.agents`/`.tasks` — same `{nodes, edges}` output shape as the worker above |
+| `adapters/http_in/app.py` | FastAPI routes and error handling |
+| `main.py` | Thin entrypoint re-exporting `app` |
 | `demo-agent/` | Stand-in for Person 4's repo — a working triage/refund/escalation graph |
 | `docs/` | API contract, versioning ADR, discovery internals |
 

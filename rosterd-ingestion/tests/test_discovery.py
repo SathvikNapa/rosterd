@@ -6,8 +6,8 @@ import sys
 import pytest
 from conftest import DEMO_AGENT, SIMPLE_AGENT, TOOLNODE_AGENT
 
-import discovery
-from errors import GraphLoadError, GraphNotFoundError
+from application import discovery
+from domain.errors import GraphLoadError, GraphNotFoundError
 
 
 def test_discovers_nodes_edges_and_tools_from_the_demo_repo(settings):
@@ -243,13 +243,13 @@ class TestSandboxedInstallRetry:
     venv build."""
 
     def test_looks_like_missing_dependency_matches_modulenotfounderror(self):
-        from errors import GraphLoadError
+        from domain.errors import GraphLoadError
 
         error = GraphLoadError("boom", traceback="...\nModuleNotFoundError: No module named 'deerflow'\n")
         assert discovery._looks_like_missing_dependency(error) is True
 
     def test_looks_like_missing_dependency_matches_importerror_without_cannot_import_name(self):
-        from errors import GraphLoadError
+        from domain.errors import GraphLoadError
 
         error = GraphLoadError("boom", traceback="ImportError: cannot load shared library")
         assert discovery._looks_like_missing_dependency(error) is True
@@ -258,13 +258,13 @@ class TestSandboxedInstallRetry:
         """A real bug in the target graph (a typo'd import from an already-
         installed module) must NOT trigger a pointless sandboxed install --
         that failure has nothing to do with a missing dependency."""
-        from errors import GraphLoadError
+        from domain.errors import GraphLoadError
 
         error = GraphLoadError("boom", traceback="ImportError: cannot import name 'Foo' from 'bar'")
         assert discovery._looks_like_missing_dependency(error) is False
 
     def test_looks_like_missing_dependency_excludes_unrelated_errors(self):
-        from errors import GraphLoadError
+        from domain.errors import GraphLoadError
 
         error = GraphLoadError("boom", traceback="RuntimeError: boom at import time")
         assert discovery._looks_like_missing_dependency(error) is False
@@ -280,7 +280,7 @@ class TestSandboxedInstallRetry:
             },
         )
 
-        import sandbox
+        from adapters.subprocess_sandbox import sandbox
 
         calls = {"ensure_installed": 0, "run_worker_pythons": []}
         real_run_worker = discovery._run_worker
@@ -288,7 +288,7 @@ class TestSandboxedInstallRetry:
         def fake_run_worker(location, settings_, *, python_executable=None, worker=None):
             calls["run_worker_pythons"].append(python_executable)
             if python_executable is None:
-                from errors import GraphLoadError
+                from domain.errors import GraphLoadError
 
                 raise GraphLoadError(
                     "Importing the graph failed: ModuleNotFoundError: No module named 'nope'",
@@ -320,10 +320,10 @@ class TestSandboxedInstallRetry:
             },
         )
 
-        import sandbox
+        from adapters.subprocess_sandbox import sandbox
 
         def fake_run_worker(location, settings_, *, python_executable=None, worker=None):
-            from errors import GraphLoadError
+            from domain.errors import GraphLoadError
 
             raise GraphLoadError(
                 "Importing the graph failed: ModuleNotFoundError: No module named 'nope'",
@@ -347,7 +347,7 @@ class TestSandboxedInstallRetry:
             },
         )
 
-        import sandbox
+        from adapters.subprocess_sandbox import sandbox
 
         calls = {"ensure_installed": 0}
         monkeypatch.setattr(

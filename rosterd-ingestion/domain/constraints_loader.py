@@ -14,7 +14,7 @@ from typing import Any
 
 import yaml
 
-from errors import ConstraintsParseError, ConstraintsValidationError
+from domain.errors import ConstraintsParseError, ConstraintsValidationError
 
 #: Keys that shape the manifest entry itself rather than runtime constraints.
 #: Everything else in a node's block is passed through to the kernel.

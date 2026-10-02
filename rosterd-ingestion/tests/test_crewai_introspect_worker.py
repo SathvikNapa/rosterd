@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-import crewai_introspect_worker as worker
+from adapters.subprocess_sandbox import crewai_introspect_worker as worker
 
 
 def _fake_agent(role: str) -> SimpleNamespace:

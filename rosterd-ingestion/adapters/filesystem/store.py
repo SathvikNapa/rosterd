@@ -27,8 +27,8 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from config import MANIFEST_SCHEMA_VERSION, Settings
-from errors import ManifestNotFoundError
-from ingestion import AgentManifestEntry, ManifestStatus
+from domain.errors import ManifestNotFoundError
+from domain.ingestion import AgentManifestEntry, ManifestStatus
 from rosterd_contracts import GraphSpec
 
 

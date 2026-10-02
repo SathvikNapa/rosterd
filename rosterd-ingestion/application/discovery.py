@@ -22,10 +22,16 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
-import astscan
-import sandbox
+from domain import astscan
+from domain.errors import GraphLoadError, GraphNotFoundError
+
+# NOTE: pragmatic hexagonal exception -- ensure_installed() is a single
+# concrete function with no alternate implementation anywhere (same spirit
+# as rosterd-demo-agent's adapters/llm/brain.py / adapters/tooling/toolrun.py
+# exception), so this stays a direct adapter import rather than an invented
+# port.
+from adapters.subprocess_sandbox import sandbox
 from config import Settings
-from errors import GraphLoadError, GraphNotFoundError
 from rosterd_contracts import GraphEdge, GraphSpec
 
 logger = logging.getLogger("rosterd.ingestion.discovery")
@@ -47,8 +53,13 @@ _CANDIDATE_ATTRS = ["graph", "app", "workflow", "agent", "compiled_graph", "chai
 _CREWAI_CANDIDATE_FILES = ["crew.py", "main.py", "app.py", "src/crew.py", "src/main.py"]
 _CREWAI_CANDIDATE_ATTRS = ["crew"]
 
-_WORKER = Path(__file__).parent / "_introspect_worker.py"
-_WORKER_CREWAI = Path(__file__).parent / "crewai_introspect_worker.py"
+# Both worker scripts live in adapters/subprocess_sandbox/, a sibling
+# directory to this module's own application/ -- not Path(__file__).parent,
+# since this file moved there as part of the hexagonal restructuring and the
+# workers didn't move with it (they're adapters, this is application).
+_WORKER_DIR = Path(__file__).resolve().parent.parent / "adapters" / "subprocess_sandbox"
+_WORKER = _WORKER_DIR / "_introspect_worker.py"
+_WORKER_CREWAI = _WORKER_DIR / "crewai_introspect_worker.py"
 
 
 @dataclass

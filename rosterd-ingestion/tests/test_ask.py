@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import pytest
 
-from ask import derive_criteria, detect_priority, parse_ask, score_agents, tokenize
-from ingestion import AgentConstraints, AgentManifestEntry, Confidence
+from domain.ask import derive_criteria, detect_priority, parse_ask, score_agents, tokenize
+from domain.ingestion import AgentConstraints, AgentManifestEntry, Confidence
 from rosterd_contracts import Priority
 
 

@@ -15,7 +15,7 @@ import sys
 
 import pytest
 
-import _introspect_worker as worker
+from adapters.subprocess_sandbox import _introspect_worker as worker
 
 
 class TestLoadModule:

@@ -17,7 +17,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from config import Settings
-from errors import RepoFetchError, RepoNotAllowedError
+from domain.errors import RepoFetchError, RepoNotAllowedError
 
 #: Hosts that resolve to an on-disk fixture when local_repo_root is configured.
 _LOCAL_HOSTS = {"localhost", "127.0.0.1", "local"}

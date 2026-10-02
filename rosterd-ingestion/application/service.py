@@ -11,12 +11,12 @@ import logging
 from dataclasses import dataclass
 from pathlib import Path
 
-import constraints_loader
-import discovery
-import manifest as manifest_builder
+from domain import constraints_loader
+from domain import manifest as manifest_builder
+from adapters.filesystem.repo import fetch_repo
+from adapters.filesystem.store import ManifestStore, StoredManifest, compute_manifest_id, sha256_text
+from application import discovery
 from config import Settings
-from repo import fetch_repo
-from store import ManifestStore, StoredManifest, compute_manifest_id, sha256_text
 
 logger = logging.getLogger("rosterd.ingestion")
 

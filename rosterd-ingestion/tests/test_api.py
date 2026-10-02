@@ -129,7 +129,7 @@ class TestGetManifest:
         def explode(*args, **kwargs):
             raise AssertionError("GET /manifest must not fetch the repo")
 
-        monkeypatch.setattr("repo.fetch_repo", explode)
+        monkeypatch.setattr("adapters.filesystem.repo.fetch_repo", explode)
         assert client.get(f"/manifest/{created['manifest_id']}").status_code == 200
 
     def test_an_old_version_still_resolves_after_a_re_ingest(self, client, demo):

@@ -30,10 +30,19 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-from constraints_loader import ParsedConstraints
-from discovery import DiscoveryResult
-from ingestion import AgentConstraints, AgentManifestEntry
+from domain.constraints_loader import ParsedConstraints
+from domain.ingestion import AgentConstraints, AgentManifestEntry
 from rosterd_contracts import GraphSpec
+
+# NOTE: pragmatic hexagonal exception -- DiscoveryResult is defined in
+# application/discovery.py, so this is domain importing application, the
+# reverse of the usual direction. Untangling it means moving DiscoveryResult
+# itself (and the whole discover()/DiscoveredNode shape it's built from) down
+# into domain/, which recasts "what discovery produces" as a port -- a real
+# design decision, not a move, and not what this pass asked for. Same spirit
+# as the other documented exceptions in this codebase (rosterd-kernel's
+# domain/manifest.py -> adapters/http_out/legacy_constraints.py).
+from application.discovery import DiscoveryResult
 
 
 @dataclass
