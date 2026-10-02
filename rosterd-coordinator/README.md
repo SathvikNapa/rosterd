@@ -1,4 +1,4 @@
-# rosterd — coordinator service (Person 3, coordinator half)
+# rosterd - coordinator service
 
 The federation layer. Receives a run/scale event from every site's kernel,
 tracks each site's health, and pushes a tightened policy to every kernel
@@ -78,7 +78,7 @@ POST /events
 | `ROSTERD_COORDINATOR_PATTERN_COOLDOWN_SEC` | `60` | Don't re-push the same rule more than once within this long |
 | `ROSTERD_COORDINATOR_TIGHTEN_FACTOR` | `0.5` | How hard an `lte`/`gte` bound tightens (0.5 = halve the ceiling / double the floor) |
 | `ROSTERD_COORDINATOR_PUSH_TIMEOUT_SEC` | `5` | Per-kernel HTTP timeout when broadcasting |
-| `ROSTERD_COORDINATOR_SPACETIMEDB_URL` / `_MODULE` / `_TOKEN` | — | Unset = log rows instead of writing them |
+| `ROSTERD_COORDINATOR_SPACETIMEDB_URL` / `_MODULE` / `_TOKEN` | - | Unset = log rows instead of writing them |
 | `ROSTERD_COORDINATOR_OTEL_ENABLED` | `true` | Set `false` to skip OTel setup entirely |
 | `ROSTERD_COORDINATOR_OTEL_ENDPOINT` | `http://localhost:4318` | OTLP/HTTP collector endpoint |
 
