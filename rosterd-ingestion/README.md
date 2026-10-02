@@ -128,9 +128,9 @@ Two rules govern the merge:
 
 ## Security note — please read before demoing
 
-**`import` mode executes code from the cloned repo.** That is not incidental; the task requires calling `get_graph()`, and you cannot compile a LangGraph graph without running the module that builds it. A malicious repo URL is therefore arbitrary code execution as whoever runs this service.
+**`import` mode executes code from the cloned repo.** That is not incidental; the task requires calling `get_graph()` (LangChain/LangGraph) or walking a `Crew`'s own `.agents`/`.tasks` (CrewAI), and neither is possible without running the module that builds it. A malicious repo URL is therefore arbitrary code execution as whoever runs this service — for either framework; CrewAI's `crewai_introspect_worker.py` is isolated exactly the same way LangChain's `_introspect_worker.py` is, described below.
 
-What is in place: the import runs in a **subprocess** with a wall-clock timeout, so a hang or a crash cannot take the API down; clones are shallow with **git hooks disabled** and credential prompts off; there is a size cap and an optional host allowlist; and locating the graph is done by AST, so nothing runs until the graph has actually been found.
+What is in place: the import runs in a **subprocess** with a wall-clock timeout, so a hang or a crash cannot take the API down; clones are shallow with **git hooks disabled** and credential prompts off; there is a size cap and an optional host allowlist; and locating the graph (or the crew) is done by AST, so nothing runs until it has actually been found.
 
 What is **not** in place: no container, no seccomp, no user separation, no network egress control for the child. Isolation is not a sandbox.
 
@@ -154,20 +154,30 @@ For a clean, unambiguous success — not just "got further before hitting a diff
 
 ## Layout
 
+Hexagonal: `domain/` (pure logic + wire contracts) -> `application/` (the
+ingest pipeline, discovery's dispatch/merge logic) -> `adapters/` (repo
+cloning, manifest persistence, the sandboxed-subprocess introspection
+workers, the FastAPI boundary) -> `main.py` (thin entrypoint). Same
+convention as `rosterd-kernel`/`rosterd-coordinator`/`rosterd-demo-agent`.
+`config.py` stays at root, same as in the other three services.
+
 | File | Purpose |
 | --- | --- |
-| `shared.py` | Types shared across the team. **Do not redefine these elsewhere.** |
-| `ingestion.py` | This service's schema, exactly as specified in the brief |
-| `app.py` | FastAPI routes and error handling |
-| `service.py` | The ingest pipeline, end to end |
-| `repo.py` | Cloning, with the safety controls |
-| `discovery.py` | Locating the graph and merging the runtime and static passes |
-| `sandbox.py` | Fresh-venv dependency install + retry, when the fast import fails on a missing dependency |
-| `_introspect_worker.py` | Subprocess that imports the repo and calls `get_graph()` |
-| `astscan.py` | AST analysis: tool definitions, tool attribution, node wiring |
-| `constraints_loader.py` | Parsing and validating `constraints.yaml` |
-| `manifest.py` | Merging graph + constraints into `AgentManifestEntry` |
-| `store.py` | Persistence, content addressing, lineage |
+| `domain/ingestion.py` | This service's schema, exactly as specified in the brief (shared types now come from `rosterd-contracts`, see `../libs/rosterd-contracts/`) |
+| `domain/errors.py` | Every expected failure, as a typed exception |
+| `domain/astscan.py` | AST analysis: tool definitions, tool attribution, node wiring |
+| `domain/constraints_loader.py` | Parsing and validating `constraints.yaml` |
+| `domain/manifest.py` | Merging graph + constraints into `AgentManifestEntry` (imports `application/discovery.py`'s `DiscoveryResult` -- a documented pragmatic hexagonal exception) |
+| `domain/ask.py` | Turning plain text into a proposed task |
+| `application/service.py` | The ingest pipeline, end to end |
+| `application/discovery.py` | Locating the graph/crew and merging the runtime and static passes; dispatches to LangChain or CrewAI (`is_crewai_repo`) |
+| `adapters/filesystem/repo.py` | Cloning, with the safety controls |
+| `adapters/filesystem/store.py` | Persistence, content addressing, lineage |
+| `adapters/subprocess_sandbox/sandbox.py` | Fresh-venv dependency install + retry, when the fast import fails on a missing dependency |
+| `adapters/subprocess_sandbox/_introspect_worker.py` | Subprocess that imports a LangChain Runnable (LangGraph or plain LCEL) and calls `get_graph()` |
+| `adapters/subprocess_sandbox/crewai_introspect_worker.py` | Subprocess that imports a CrewAI `Crew` and walks its `.agents`/`.tasks` — same `{nodes, edges}` output shape as the worker above |
+| `adapters/http_in/app.py` | FastAPI routes and error handling |
+| `main.py` | Thin entrypoint re-exporting `app` |
 | `demo-agent/` | Stand-in for Person 4's repo — a working triage/refund/escalation graph |
 | `docs/` | API contract, versioning ADR, discovery internals |
 
@@ -182,7 +192,7 @@ For a clean, unambiguous success — not just "got further before hitting a diff
 
 Two things in the brief I did **not** change unilaterally, since it says to flag manifest-shape changes to Person 1 and Person 3 first:
 
-1. **`shared.py` and `ingestion.py` are verbatim from the brief.** Every field, default, and docstring matches. Nothing was added to `IngestResponse` or `ManifestResponse`.
+1. **`ingestion.py` is verbatim from the brief** (its shared-type imports now come from `rosterd-contracts` rather than a hand-copied `shared.py`). Every field, default, and docstring matches. Nothing was added to `IngestResponse` or `ManifestResponse`.
 2. **Provenance is a separate endpoint, not extra fields.** The Contracts screen needs a constraints hash for its "Verified" badge and the kernel benefits from `commit_sha`, but both would have meant adding fields to the contracted response. They live on `GET /manifest/{id}/provenance` instead. **If Person 1 or Person 3 would rather have them inline, that is a one-line change and worth doing — but it is your call, not mine.**
 
 One question worth settling early: the kernel needs to match on `node`, not `id`. `node` is the exact LangGraph node name; `id` is the short display handle (`refund_node` → `refund`). If Person 1 is matching on `id`, a repo with a node literally named `refund` would collide. Matching on `node` avoids it entirely.

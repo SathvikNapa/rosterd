@@ -17,10 +17,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-import discovery  # noqa: E402
+from application import discovery  # noqa: E402
+from adapters.filesystem.repo import fetch_repo  # noqa: E402
 from config import get_settings  # noqa: E402
-from errors import IngestError  # noqa: E402
-from repo import fetch_repo  # noqa: E402
+from domain.errors import IngestError  # noqa: E402
 
 SUITE = [
     "https://github.com/langchain-ai/react-agent",

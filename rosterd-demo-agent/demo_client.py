@@ -8,8 +8,8 @@ import json
 import sys
 import urllib.request
 
+from domain.tools import issue_refund, reserve_inventory
 from scenarios import ALL
-from tools import issue_refund, reserve_inventory
 
 BASE = "http://localhost:8000"
 TOOLS = {t.name: t for t in (reserve_inventory, issue_refund)}

@@ -169,12 +169,16 @@ services:
   # ---------------------------------------------------------------------
 
   # ingestion:
-  #   build: ./rosterd-ingestion
+  #   build:
+  #     context: .
+  #     dockerfile: rosterd-ingestion/Dockerfile
   #   ports: ["8000:8000"]
   #   networks: [rosterd-backend]
 
   # demo-agent-site-a:
-  #   build: ./rosterd-demo-agent
+  #   build:
+  #     context: .
+  #     dockerfile: rosterd-demo-agent/Dockerfile
   #   networks: [rosterd-site-a]     # only reachable by kernel-site-a
 
   # The UI. Served as static files by nginx; the browser talks to the

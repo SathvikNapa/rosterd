@@ -65,7 +65,7 @@ def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 @pytest.fixture
 def client(env):
     from fastapi.testclient import TestClient
-    import app as app_module
+    from adapters.http_in import app as app_module
 
     return TestClient(app_module.app)
 

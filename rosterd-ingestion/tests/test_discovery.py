@@ -6,8 +6,8 @@ import sys
 import pytest
 from conftest import DEMO_AGENT, SIMPLE_AGENT, TOOLNODE_AGENT
 
-import discovery
-from errors import GraphLoadError, GraphNotFoundError
+from application import discovery
+from domain.errors import GraphLoadError, GraphNotFoundError
 
 
 def test_discovers_nodes_edges_and_tools_from_the_demo_repo(settings):
@@ -104,6 +104,46 @@ def test_falls_back_to_a_compile_assignment_without_langgraph_json(settings, mak
     result = discovery.discover(path, settings)
     assert "compile() assignment" in result.graph_attr
     assert result.agent_nodes == ["triage_node", "refund_node"]
+
+
+def test_a_plain_langchain_lcel_chain_is_discovered_with_no_langgraph_at_all(settings, make_repo):
+    """Not every real repo is LangGraph: a plain LCEL chain (`a | b | c`,
+    LangChain Core's own composition, used with no LangGraph import, no
+    langgraph.json, no .compile() call, and an arbitrary variable name
+    none of the conventional-attr heuristics would catch) is still found,
+    via the LCEL ('|') assignment tier, and its nodes come back readable
+    (the wrapped function's own name, or the component's class name) --
+    never the opaque hash .get_graph() auto-generates for an un-named
+    Runnable step. Confirmed empirically against a real langchain-core
+    chain before this test was written, not assumed."""
+    _, path = make_repo(
+        "plain-lcel",
+        {
+            "pipeline.py": (
+                "from langchain_core.prompts import ChatPromptTemplate\n"
+                "from langchain_core.runnables import RunnableLambda\n"
+                "from langchain_core.output_parsers import StrOutputParser\n"
+                "\n"
+                "def classify(payload):\n"
+                "    '''Classifies the incoming request.'''\n"
+                "    return 'standard'\n"
+                "\n"
+                "my_totally_arbitrary_pipeline_name = (\n"
+                "    ChatPromptTemplate.from_template('Classify: {text}')\n"
+                "    | RunnableLambda(classify)\n"
+                "    | StrOutputParser()\n"
+                ")\n"
+            )
+        },
+    )
+    result = discovery.discover(path, settings)
+    assert "LCEL" in result.graph_attr
+    assert result.agent_nodes == ["ChatPromptTemplate", "classify", "StrOutputParser"]
+    assert result.nodes["classify"].purpose == "Classifies the incoming request."
+    assert {(e.source, e.target) for e in result.graph.edges} == {
+        ("ChatPromptTemplate", "classify"),
+        ("classify", "StrOutputParser"),
+    }
 
 
 def test_graph_spec_override_wins(settings, make_repo, monkeypatch):
@@ -203,13 +243,13 @@ class TestSandboxedInstallRetry:
     venv build."""
 
     def test_looks_like_missing_dependency_matches_modulenotfounderror(self):
-        from errors import GraphLoadError
+        from domain.errors import GraphLoadError
 
         error = GraphLoadError("boom", traceback="...\nModuleNotFoundError: No module named 'deerflow'\n")
         assert discovery._looks_like_missing_dependency(error) is True
 
     def test_looks_like_missing_dependency_matches_importerror_without_cannot_import_name(self):
-        from errors import GraphLoadError
+        from domain.errors import GraphLoadError
 
         error = GraphLoadError("boom", traceback="ImportError: cannot load shared library")
         assert discovery._looks_like_missing_dependency(error) is True
@@ -218,13 +258,13 @@ class TestSandboxedInstallRetry:
         """A real bug in the target graph (a typo'd import from an already-
         installed module) must NOT trigger a pointless sandboxed install --
         that failure has nothing to do with a missing dependency."""
-        from errors import GraphLoadError
+        from domain.errors import GraphLoadError
 
         error = GraphLoadError("boom", traceback="ImportError: cannot import name 'Foo' from 'bar'")
         assert discovery._looks_like_missing_dependency(error) is False
 
     def test_looks_like_missing_dependency_excludes_unrelated_errors(self):
-        from errors import GraphLoadError
+        from domain.errors import GraphLoadError
 
         error = GraphLoadError("boom", traceback="RuntimeError: boom at import time")
         assert discovery._looks_like_missing_dependency(error) is False
@@ -240,15 +280,15 @@ class TestSandboxedInstallRetry:
             },
         )
 
-        import sandbox
+        from adapters.subprocess_sandbox import sandbox
 
         calls = {"ensure_installed": 0, "run_worker_pythons": []}
         real_run_worker = discovery._run_worker
 
-        def fake_run_worker(location, settings_, *, python_executable=None):
+        def fake_run_worker(location, settings_, *, python_executable=None, worker=None):
             calls["run_worker_pythons"].append(python_executable)
             if python_executable is None:
-                from errors import GraphLoadError
+                from domain.errors import GraphLoadError
 
                 raise GraphLoadError(
                     "Importing the graph failed: ModuleNotFoundError: No module named 'nope'",
@@ -280,10 +320,10 @@ class TestSandboxedInstallRetry:
             },
         )
 
-        import sandbox
+        from adapters.subprocess_sandbox import sandbox
 
-        def fake_run_worker(location, settings_, *, python_executable=None):
-            from errors import GraphLoadError
+        def fake_run_worker(location, settings_, *, python_executable=None, worker=None):
+            from domain.errors import GraphLoadError
 
             raise GraphLoadError(
                 "Importing the graph failed: ModuleNotFoundError: No module named 'nope'",
@@ -307,7 +347,7 @@ class TestSandboxedInstallRetry:
             },
         )
 
-        import sandbox
+        from adapters.subprocess_sandbox import sandbox
 
         calls = {"ensure_installed": 0}
         monkeypatch.setattr(
@@ -440,3 +480,114 @@ class TestStaticMode:
     def test_warns_that_results_are_inferred(self, static_settings):
         result = discovery.discover(DEMO_AGENT, static_settings)
         assert any("inferred from source" in w for w in result.warnings)
+
+
+class TestCrewAI:
+    """CrewAI and LangChain/LangGraph are mutually exclusive frameworks
+    with no shared base to duck-type against (a crewai.Crew has no
+    get_graph()), so discover() checks for CrewAI first, cheaply, with
+    nothing imported. rosterd-ingestion does not carry crewai as a
+    dependency -- these tests exercise discovery.py's OWN dispatch and
+    node/edge-building logic via is_crewai_repo/locate_crew (pure AST,
+    genuinely needs no import) and a canned worker payload (an exact copy
+    of what crewai_introspect_worker.py returned against a real,
+    installed crewai 1.15.23 crew -- see its own module docstring and
+    docs/DISCOVERY.md). What CrewAI itself actually does was verified
+    live, separately, not assumed here."""
+
+    _CREW_FILE = (
+        "from crewai import Agent, Crew, Process, Task\n"
+        "\n"
+        "researcher = Agent(role='Researcher', goal='...', backstory='...')\n"
+        "writer = Agent(role='Writer', goal='...', backstory='...')\n"
+        "research_task = Task(description='Look up a price.', agent=researcher)\n"
+        "write_task = Task(description='Summarize it.', agent=writer, context=[research_task])\n"
+        "\n"
+        "my_totally_arbitrary_crew_name = Crew(\n"
+        "    agents=[researcher, writer],\n"
+        "    tasks=[research_task, write_task],\n"
+        "    process=Process.sequential,\n"
+        ")\n"
+    )
+
+    #: An exact copy of crewai_introspect_worker.py's real stdout against
+    #: the live crew this class's _CREW_FILE mirrors -- captured empirically,
+    #: not invented.
+    _CANNED_PAYLOAD = {
+        "ok": True,
+        "nodes": {
+            "Researcher": {
+                "kind": "CrewAI Task",
+                "purpose": "Look up the price of SKU-DEMO.",
+                "tools": ["lookup_price"],
+                "source": None,
+                "agent_role": "Researcher",
+            },
+            "Writer": {
+                "kind": "CrewAI Task",
+                "purpose": "Write a one-sentence summary of the research.",
+                "tools": [],
+                "source": None,
+                "agent_role": "Writer",
+            },
+        },
+        "edges": [{"source": "Researcher", "target": "Writer", "conditional": False, "data": None}],
+        "attr": "crew",
+        "process": "sequential",
+    }
+
+    def test_is_crewai_repo_needs_no_crew_assignment_just_the_import(self, make_repo):
+        _, path = make_repo("crewai-import-only", {"somewhere.py": "import crewai\n"})
+        assert discovery.is_crewai_repo(path) is True
+
+    def test_a_plain_langchain_repo_is_not_mistaken_for_crewai(self, make_repo):
+        _, path = make_repo("not-crewai", {"agent.py": SIMPLE_AGENT})
+        assert discovery.is_crewai_repo(path) is False
+
+    def test_locate_crew_finds_an_arbitrarily_named_crew_assignment(self, settings, make_repo):
+        _, path = make_repo("crewai-locate", {"crew.py": self._CREW_FILE})
+        location = discovery.locate_crew(path, settings)
+        assert location.attr == "my_totally_arbitrary_crew_name"
+        assert "Crew(...) assignment" in location.how
+
+    def test_discover_dispatches_to_the_crewai_path(self, settings, make_repo, monkeypatch):
+        _, path = make_repo("crewai-discover", {"crew.py": self._CREW_FILE})
+
+        def fake_run_worker(location, settings_, *, python_executable=None, worker=None):
+            assert worker == discovery._WORKER_CREWAI
+            return dict(self._CANNED_PAYLOAD)
+
+        monkeypatch.setattr(discovery, "_run_worker", fake_run_worker)
+
+        result = discovery.discover(path, settings)
+
+        assert result.mode == "crewai"
+        assert result.agent_nodes == ["Researcher", "Writer"]
+        assert {(e.source, e.target) for e in result.graph.edges} == {("Researcher", "Writer")}
+        assert result.nodes["Researcher"].tools == ["lookup_price"]
+        assert result.nodes["Researcher"].purpose == "Look up the price of SKU-DEMO."
+
+    def test_crewai_nodes_never_have_an_interrupt_gate(self, settings, make_repo, monkeypatch):
+        """Settled explicitly with the user, not a default this drifted
+        into: CrewAI has no interrupt()-equivalent, so every node is
+        direct_assignable with no gate, and the manifest says so."""
+        _, path = make_repo("crewai-no-gate", {"crew.py": self._CREW_FILE})
+        monkeypatch.setattr(
+            discovery, "_run_worker", lambda *a, **k: dict(self._CANNED_PAYLOAD)
+        )
+
+        result = discovery.discover(path, settings)
+
+        assert all(node.has_interrupt is False for node in result.nodes.values())
+        assert any("no interrupt()-equivalent" in w for w in result.warnings)
+
+    def test_hierarchical_process_gets_an_extra_warning_about_runtime_routing(
+        self, settings, make_repo, monkeypatch
+    ):
+        _, path = make_repo("crewai-hierarchical", {"crew.py": self._CREW_FILE})
+        hierarchical_payload = {**self._CANNED_PAYLOAD, "process": "hierarchical"}
+        monkeypatch.setattr(discovery, "_run_worker", lambda *a, **k: dict(hierarchical_payload))
+
+        result = discovery.discover(path, settings)
+
+        assert any("manager agent decides task routing at runtime" in w for w in result.warnings)

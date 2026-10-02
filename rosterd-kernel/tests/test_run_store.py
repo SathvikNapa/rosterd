@@ -1,7 +1,7 @@
 """RunStore: killed is sticky against a late-arriving `done` write."""
 from __future__ import annotations
 
-from run_store import RunStore
+from domain.run_store import RunStore
 from rosterd_contracts import RunStatus
 
 

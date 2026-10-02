@@ -14,7 +14,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from postgres import AgentMetricsRow, AgentRow, PostgresStateWriter
+from adapters.postgres.postgres import PostgresStateWriter
+from domain.ports import AgentMetricsRow, AgentRow
 
 
 class _FakeCursor:

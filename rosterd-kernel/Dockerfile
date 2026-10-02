@@ -28,4 +28,4 @@ EXPOSE 8100
 # (-v /var/run/docker.sock:/var/run/docker.sock) so this container can
 # start/kill sibling demo-agent containers via the Docker SDK. See README
 # "Running against real Docker".
-CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8100"]
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8100"]

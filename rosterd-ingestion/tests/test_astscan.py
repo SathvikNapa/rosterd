@@ -4,7 +4,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from astscan import calls_interrupt, scan_repo, tools_for_source, tools_used_by_function
+from domain.astscan import calls_interrupt, scan_repo, tools_for_source, tools_used_by_function
 
 
 def _func(source: str) -> ast.FunctionDef:
