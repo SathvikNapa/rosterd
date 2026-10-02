@@ -5,10 +5,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from fastapi.testclient import TestClient
 
-import brain
 import scenarios
+from adapters.llm import brain
+from domain.tools import ChargePaymentArgs, IssueRefundArgs, ReserveInventoryArgs
 from main import app
-from tools import ChargePaymentArgs, IssueRefundArgs, ReserveInventoryArgs
 
 client = TestClient(app)
 

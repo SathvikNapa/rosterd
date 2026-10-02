@@ -1,13 +1,26 @@
+# rosterd demo agent (e-commerce). One instance per site (see repo-root
+# docker-compose.yml, the commented `demo-agent-site-a` block).
+#
+# Build context is the REPO ROOT, not this directory -- same reasoning as
+# rosterd-kernel/Dockerfile and rosterd-coordinator/Dockerfile: that's the
+# only way this image can also see libs/rosterd-contracts, which
+# requirements.txt installs as an editable local dependency
+# (`-e ../libs/rosterd-contracts`) and which lives outside this folder --
+# WORKDIR is switched to /app/rosterd-demo-agent before `pip install -r
+# requirements.txt` runs specifically so that relative `../` resolves to
+# /app/libs/rosterd-contracts.
 FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 WORKDIR /app
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Shared contracts package's own files first -- changes far less often
+# than service code, so this layer stays cached across most rebuilds.
+COPY libs/rosterd-contracts /app/libs/rosterd-contracts
 
-# shared.py must be present in the build context (see README, step 3)
-COPY . .
+COPY rosterd-demo-agent/ /app/rosterd-demo-agent/
+WORKDIR /app/rosterd-demo-agent
+RUN pip install --no-cache-dir -r requirements.txt
 
 ENV PORT=8000 AGENT_MODE=scripted
 EXPOSE 8000

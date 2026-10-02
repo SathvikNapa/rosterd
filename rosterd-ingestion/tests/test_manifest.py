@@ -3,9 +3,9 @@ from __future__ import annotations
 
 from conftest import DEMO_AGENT
 
-import discovery
-from constraints_loader import parse_constraints
-from manifest import build_manifest, derive_id
+from application import discovery
+from domain.constraints_loader import parse_constraints
+from domain.manifest import build_manifest, derive_id
 
 
 def build(settings, constraints_yaml: str):

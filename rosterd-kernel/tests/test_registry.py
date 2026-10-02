@@ -3,8 +3,8 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from kernel import AgentInstance, InstanceStatus
-from registry import InstanceRegistry
+from domain.kernel import AgentInstance, InstanceStatus
+from domain.registry import InstanceRegistry
 
 
 def make_instance(agent_id="fulfillment", instance_id="i1", status=InstanceStatus.idle) -> AgentInstance:

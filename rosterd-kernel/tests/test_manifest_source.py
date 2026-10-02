@@ -4,12 +4,12 @@ errors or returns nothing.
 
 Added after a live integration test against a real, running
 rosterd-ingestion found a draft manifest was silently accepted and made
-live -- see manifest_source.py's module docstring for the full story.
+live -- see adapters/http_out/manifest_source.py's module docstring for the full story.
 """
 from __future__ import annotations
 
-from manifest import AgentManifestEntry, ManifestDocument, ManifestIndex, ManifestStatus
-from manifest_source import IngestionPollManifestSource, ManifestSubscription, StaticManifestSource
+from domain.manifest import AgentManifestEntry, ManifestDocument, ManifestIndex, ManifestStatus
+from adapters.http_out.manifest_source import IngestionPollManifestSource, ManifestSubscription, StaticManifestSource
 
 
 def make_document(status: ManifestStatus, manifest_id: str = "mf_1") -> ManifestDocument:
@@ -100,7 +100,7 @@ class TestIngestionPollScalingDefault:
         def fake_get(url, timeout=None):
             return FakeResponse()
 
-        import manifest_source
+        from adapters.http_out import manifest_source
 
         monkeypatch.setattr(manifest_source.httpx, "get", fake_get)
 

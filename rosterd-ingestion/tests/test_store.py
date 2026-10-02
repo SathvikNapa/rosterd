@@ -3,10 +3,10 @@ from __future__ import annotations
 
 import pytest
 
-from errors import ManifestNotFoundError
-from ingestion import AgentManifestEntry
+from domain.errors import ManifestNotFoundError
+from domain.ingestion import AgentManifestEntry
 from rosterd_contracts import GraphSpec
-from store import ManifestStore, compute_manifest_id, lineage_id_for
+from adapters.filesystem.store import ManifestStore, compute_manifest_id, lineage_id_for
 
 
 def save(store: ManifestStore, *, commit="c1", constraints="s1", repo="https://example.com/r"):

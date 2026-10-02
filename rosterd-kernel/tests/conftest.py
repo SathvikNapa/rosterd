@@ -5,7 +5,7 @@ no real container, but every dispatch still forwards to a real HTTP demo
 agent double via fake_demo_agent below -- plus a StaticManifestSource
 seeded in-process, no live ingestion/coordinator/Postgres needed) rather
 than sharing one module-level app, since the kernel is stateful across
-requests -- see app.py's module docstring.
+requests -- see adapters/http_in/app.py's module docstring.
 """
 from __future__ import annotations
 
@@ -13,9 +13,9 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-from app import build_container, create_app
+from adapters.http_out.manifest_source import StaticManifestSource
 from config import Settings
-from manifest import (
+from domain.manifest import (
     AgentManifestEntry,
     ConstraintRule,
     ConstraintSource,
@@ -23,7 +23,7 @@ from manifest import (
     ManifestDocument,
     ScalingPolicy,
 )
-from manifest_source import StaticManifestSource
+from main import build_container, create_app
 
 
 def make_settings(**overrides) -> Settings:
@@ -123,7 +123,7 @@ def fake_demo_agent(monkeypatch):
     def _post(url, json=None, headers=None, timeout=None):  # noqa: A002
         return state["handler"](json)
 
-    import demo_agent_client
+    from adapters.http_out import demo_agent_client
 
     monkeypatch.setattr(demo_agent_client, "httpx", _HttpxStub(_post))
 

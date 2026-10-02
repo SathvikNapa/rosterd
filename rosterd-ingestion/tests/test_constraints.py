@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import pytest
 
-from constraints_loader import parse_constraints, validate_against_graph
-from errors import ConstraintsParseError, ConstraintsValidationError
+from domain.constraints_loader import parse_constraints, validate_against_graph
+from domain.errors import ConstraintsParseError, ConstraintsValidationError
 from rosterd_contracts import GraphEdge
 
 

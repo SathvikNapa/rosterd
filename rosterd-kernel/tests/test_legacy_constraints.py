@@ -7,8 +7,8 @@ manifest_source.py and manifest.py's module docstrings for the full story.
 """
 from __future__ import annotations
 
-from legacy_constraints import DEFAULT_LEGACY_CONSTRAINT_MAP, adapt_legacy_constraints, is_legacy_shape
-from manifest import AgentManifestEntry, ConstraintRule
+from adapters.http_out.legacy_constraints import DEFAULT_LEGACY_CONSTRAINT_MAP, adapt_legacy_constraints, is_legacy_shape
+from domain.manifest import AgentManifestEntry, ConstraintRule
 
 
 class TestIsLegacyShape:

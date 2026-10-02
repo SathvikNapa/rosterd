@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-import sandbox
+from adapters.subprocess_sandbox import sandbox
 
 
 class TestFindProjectDir:

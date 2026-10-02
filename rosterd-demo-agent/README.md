@@ -1,4 +1,4 @@
-# demo-agent (Person 4) -- e-commerce LangGraph system for rosterd
+# demo-agent - e-commerce LangGraph system for rosterd
 
 Answers only, never calls out. Endpoints:
 
@@ -9,18 +9,25 @@ Answers only, never calls out. Endpoints:
 | GET | /health | extra: Docker healthcheck, shows mode |
 | POST | /resume | extra: approve/deny a run paused by interrupt() |
 
-## Files
-- `demo_agent.py`   API schema, exactly as in the contract (don't edit)
-- `shared.py`       team's shared types, kept verbatim per the team convention (every service carries its own copy)
-- `tools.py`        tool schemas: `Field(le=50)`, `Field(le=100)`  <- ingestion reads these
-- `refund_node.py`  Refund/Exception node with `interrupt()`      <- ingestion reads this
-- `graph.py`        the 3-node graph, incl. a module-level `graph = build_graph()` <- ingestion reads this
-- `langgraph.json`  points ingestion at `graph.py:graph` (the convention its discovery checks first)
+## Layout
+
+Hexagonal: `domain/` (pure logic + wire contracts) -> `application/` (the
+graph, the refund node -- orchestration) -> `adapters/` (the LangChain/LLM
+boundary, the tool-invocation boundary, the FastAPI boundary) -> `main.py`
+(thin entrypoint). Same convention as `rosterd-kernel`/`rosterd-coordinator`.
+
+- `domain/demo_agent.py`   API schema, exactly as in the contract (don't edit)
+- shared types come from `rosterd-contracts` (see `../libs/rosterd-contracts/`), not a hand-copied `shared.py`
+- `domain/tools.py`        tool schemas: `Field(gt=0, le=50)`, `Field(gt=0, le=100)`, `Field(gt=0, le=2000)`  <- ingestion reads these
+- `application/refund_node.py`  Refund/Exception node with `interrupt()`      <- ingestion reads this
+- `application/graph.py`   the 5-node graph (order_intake, fulfillment, refund_exception, catalog, payment), incl. a module-level `graph = build_graph()` <- ingestion reads this
+- `langgraph.json`  points ingestion at `application/graph.py:graph` (the convention its discovery checks first)
 - `constraints.yaml`  reference copy of the constraints text to paste into ingestion's `POST /ingest` (not auto-read from the repo -- see the file's own header comment, and the gap it flags)
-- `brain.py`        scripted vs LLM decision-making
-- `toolrun.py`      records tool calls exactly as attempted
-- `main.py`         FastAPI app
-- `scenarios.py`, `demo_client.py`  seeded demos + a tiny CLI
+- `adapters/llm/brain.py`        scripted vs LLM decision-making -- no formal Protocol today (just two interchangeable classes), so `application/graph.py` and `application/refund_node.py` import it directly (a documented pragmatic hexagonal exception)
+- `adapters/tooling/toolrun.py`  records tool calls exactly as attempted -- same exception, same reason
+- `adapters/http_in/app.py`      the real FastAPI app
+- `main.py`         thin entrypoint re-exporting `app`
+- `scenarios.py`, `demo_client.py`  seeded demos + a tiny CLI (dev tooling, stay at root)
 
 ## Integration status (as verified against `rosterd-ingestion`/`rosterd-kernel` on `main`)
 - Ingestion's default discovery (`ROSTERD_DISCOVERY_MODE=import`) locates the
@@ -36,7 +43,7 @@ Answers only, never calls out. Endpoints:
   a hand-written `constraints.yaml` (no code path infers rules from
   `Field(le=...)` or `interrupt()` yet -- see `rosterd-ingestion/docs/ADR-002-confirm-gate.md`),
   and even a correct `constraints.yaml` won't reach the kernel's evaluator
-  correctly today: `rosterd-kernel/manifest.py` documents that ingestion's
+  correctly today: `rosterd-kernel/domain/manifest.py` documents that ingestion's
   committed `AgentConstraints` (a flat blob) and the kernel's expected
   `list[ConstraintRule]` (dot-path `field`/`op`/`value`) have not converged.
   See `constraints.yaml`'s header comment for the concrete field this
@@ -58,5 +65,10 @@ Answers only, never calls out. Endpoints:
     python demo_client.py misdirection --llm    # unscripted (needs key)
 
 ## Docker
-    docker build -t demo-agent .
+
+Build context is the repo root (so the image can also see
+`../libs/rosterd-contracts` -- see the Dockerfile's own header comment),
+not this directory:
+
+    cd .. && docker build -f rosterd-demo-agent/Dockerfile -t demo-agent . && cd rosterd-demo-agent
     docker run --rm -p 8000:8000 demo-agent
