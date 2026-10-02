@@ -1,4 +1,4 @@
-# demo-agent (Person 4) -- e-commerce LangGraph system for rosterd
+# demo-agent - e-commerce LangGraph system for rosterd
 
 Answers only, never calls out. Endpoints:
 
