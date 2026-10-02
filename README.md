@@ -90,7 +90,7 @@ follows the [Contributor Covenant](CODE_OF_CONDUCT.md).
 <!-- Add yourself here! Format: [Name](GitHub profile) -->
 - [Sathvik Napa](https://github.com/SathvikNapa) - contributor
 - [Param Chawla](https://github.com/anonymous2912) - contributor
-- [Shruti Patki] (https://github.com/ShrutiPatki) - contributor
+- [Shruti Patki](https://github.com/ShrutiPatki) - contributor
 
 ## License
 
