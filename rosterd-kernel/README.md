@@ -1,4 +1,4 @@
-# rosterd — kernel service (Person 1)
+# rosterd - kernel service
 
 One kernel instance per site. Dispatches tasks to that site's demo-agent
 pool, enforces the confirmed manifest's constraints at every tool call,
@@ -23,7 +23,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 ```
 
 Nothing above needs Docker, Postgres, ingestion, or an OTel collector
-running — `ROSTERD_KERNEL_DOCKER_MODE=simulated` (the default) simulates
+running - `ROSTERD_KERNEL_DOCKER_MODE=simulated` (the default) simulates
 the instance *pool* only (no real container is started or killed; every
 dispatch still runs for real against a real demo-agent process), Postgres
 writes fall back to logging, and OTel setup no-ops if the SDK can't reach
@@ -54,11 +54,11 @@ write a full `agent_metrics` row regardless of whether anything changed,
 and write an `agents` row only when the pool itself changed.
 
 **A load burst can finish faster than the scaler samples it.** The scaler
-only *sees* load at the instant of its own tick — `working + queued` read
+only *sees* load at the instant of its own tick - `working + queued` read
 once per `ROSTERD_KERNEL_SCALER_INTERVAL_SEC`, not continuously. Against a
 fast agent (demo-agent in `AGENT_MODE=scripted`, no network call per
 request), a `/simulate-load` burst of even a few hundred requests can fully
-drain in well under a second — faster than the default 5s tick — so two
+drain in well under a second - faster than the default 5s tick - so two
 consecutive samples can straddle the whole spike and show no scaling at
 all, even though real load genuinely happened in between. Confirmed live:
 firing `{"count": 300, "rate_per_second": 0}` at four agent pools at once
@@ -70,7 +70,7 @@ load, sustained for several seconds (repeated overlapping bursts) with
 demo: sustain the load for longer than one tick interval (several
 overlapping `/simulate-load` calls rather than one), or lower
 `ROSTERD_KERNEL_SCALER_INTERVAL_SEC` for the session. `AGENT_MODE=llm`
-sidesteps this differently — a real model call naturally takes long enough
+sidesteps this differently - a real model call naturally takes long enough
 per request that a burst builds a visible backlog even at the default
 interval, which is what the original (fulfillment-only) flash-sale demo
 was implicitly relying on.
@@ -80,14 +80,14 @@ was implicitly relying on.
 | Method | Path | Purpose |
 | --- | --- | --- |
 | `POST` | `/dispatch` | Accept or reject a task assignment, run it |
-| `GET` | `/runs/{run_id}` | Check a run's status (now includes `paused` — see below) |
+| `GET` | `/runs/{run_id}` | Check a run's status (now includes `paused` - see below) |
 | `POST` | `/runs/{run_id}/kill` | Force-terminate a run |
-| `POST` | `/runs/{run_id}/resume` | Approve/deny a run paused at demo-agent's `interrupt()` — by a human, or by the reviewer agent (see "Verified against the real demo-agent") |
+| `POST` | `/runs/{run_id}/resume` | Approve/deny a run paused at demo-agent's `interrupt()` - by a human, or by the reviewer agent (see "Verified against the real demo-agent") |
 | `POST` | `/policy` | Apply a policy update from the coordinator |
 | `GET` | `/health` | Status and remaining budget |
 | `GET` | `/agents/{agent_id}/instances` | Current pool size and per-instance status |
 | `POST` | `/agents/{agent_id}/scale` | Manual scale override (debug/emergency) |
-| `POST` | `/agents/{agent_id}/simulate-load` | Fire synthetic load — what "Simulate flash sale" calls |
+| `POST` | `/agents/{agent_id}/simulate-load` | Fire synthetic load - what "Simulate flash sale" calls |
 | `GET` | `/manifest` | *(debug)* the manifest currently governing this site |
 | `GET` | `/policy` | *(debug)* current policy overrides |
 | `GET` | `/healthz` | *(debug)* liveness + effective settings |
@@ -102,10 +102,10 @@ discipline as `rosterd-ingestion`'s own `/healthz` / `/manifests`.
 | `ROSTERD_SITE_ID` | `site-a` | Which site this kernel instance is |
 | `PORT` | `8100` | Listen port |
 | `ROSTERD_KERNEL_INGESTION_URL` | `http://localhost:8000` | Polled for the confirmed manifest |
-| `ROSTERD_KERNEL_MANIFEST_ID` | — | Which manifest this site subscribes to. Unset = `manifest_not_ready` |
+| `ROSTERD_KERNEL_MANIFEST_ID` | - | Which manifest this site subscribes to. Unset = `manifest_not_ready` |
 | `ROSTERD_KERNEL_MANIFEST_POLL_SEC` | `5` | Poll interval |
 | `ROSTERD_KERNEL_DEFAULT_MIN_REPLICAS` | `1` | Applied to every agent from a real ingestion poll (ingestion has no `scaling` field yet) |
-| `ROSTERD_KERNEL_DEFAULT_MAX_REPLICAS` | `10` | Same — without this, every real-ingested manifest is silently capped at 1 replica forever |
+| `ROSTERD_KERNEL_DEFAULT_MAX_REPLICAS` | `10` | Same - without this, every real-ingested manifest is silently capped at 1 replica forever |
 | `ROSTERD_KERNEL_DEFAULT_TARGET_CONCURRENCY` | `2` | Same |
 | `ROSTERD_KERNEL_DOCKER_MODE` | `simulated` | `simulated` simulates the instance pool (real dispatch, real agent, no real container); `real` uses the Docker SDK |
 | `ROSTERD_KERNEL_SIMULATED_AGENT_URL` | `http://localhost:9000` | simulated mode: every instance's real `/invoke` target |
@@ -118,10 +118,10 @@ discipline as `rosterd-ingestion`'s own `/healthz` / `/manifests`.
 | `ROSTERD_KERNEL_MAX_TOOL_CALLS` | `20` | Budget: tool calls per run |
 | `ROSTERD_KERNEL_MAX_RUN_SECONDS` | `120` | Budget: wall-clock seconds per run |
 | `ROSTERD_KERNEL_SCALER_INTERVAL_SEC` | `5` | Scaler tick interval |
-| `ROSTERD_KERNEL_DEMO_IDLE_SECONDS` | — | Overrides every agent's `scale_down_after_idle_seconds` (demo cooldown, 15-30s) |
+| `ROSTERD_KERNEL_DEMO_IDLE_SECONDS` | - | Overrides every agent's `scale_down_after_idle_seconds` (demo cooldown, 15-30s) |
 | `ROSTERD_KERNEL_COORDINATOR_URL` | `http://localhost:8300` | Where `POST /events` goes |
-| `ROSTERD_KERNEL_SPACETIMEDB_URL` / `_MODULE` / `_TOKEN` | — | Unset = log rows instead of writing them |
-| `GROK_API_KEY` / `XAI_API_KEY` / `ANTHROPIC_API_KEY` | — | Reviewer agent's LLM provider, checked in that order. None set = reviewer disabled, paused runs wait for a human to call `POST /runs/{id}/resume` |
+| `ROSTERD_KERNEL_SPACETIMEDB_URL` / `_MODULE` / `_TOKEN` | - | Unset = log rows instead of writing them |
+| `GROK_API_KEY` / `XAI_API_KEY` / `ANTHROPIC_API_KEY` | - | Reviewer agent's LLM provider, checked in that order. None set = reviewer disabled, paused runs wait for a human to call `POST /runs/{id}/resume` |
 | `ROSTERD_KERNEL_REVIEWER_ENABLED` | `true` | Set `false` to disable the reviewer agent even with a key present |
 | `ROSTERD_KERNEL_REVIEWER_INTERVAL_SEC` | `4` | How often the reviewer checks for newly paused runs |
 | `ROSTERD_KERNEL_REVIEWER_MODEL` | provider default | Override the model name (e.g. `grok-4`, `claude-sonnet-4-5`) |
@@ -139,7 +139,7 @@ README's "Architecture" section): `domain/` (pure logic + wire contracts
 | --- | --- |
 | `domain/kernel.py` | Wire contract, verbatim from the brief (shared types come from `rosterd-contracts`, see `../libs/rosterd-contracts/`) |
 | `domain/manifest.py` | The confirmed-manifest shapes (`AgentManifestEntry`, `ConstraintRule`, `ScalingPolicy`) + `ManifestIndex` |
-| `domain/constraints.py` | `evaluate_rule` / `evaluate_all` — the generic field/op/value engine |
+| `domain/constraints.py` | `evaluate_rule` / `evaluate_all` - the generic field/op/value engine |
 | `domain/budget.py` | Tool-call-count / elapsed-time tracking per `run_id` |
 | `domain/registry.py` | The instance pool (`instances: dict[str, list[AgentInstance]]`) + queue counters |
 | `domain/policy.py` | In-memory overrides from `POST /policy` |
@@ -150,13 +150,13 @@ README's "Architecture" section): `domain/` (pure logic + wire contracts
 | `application/killer.py` | The kill switch, shared by dispatch and the scaler |
 | `application/simulate.py` | `POST /agents/{id}/simulate-load` |
 | `adapters/http_out/legacy_constraints.py` | Stopgap: adapts ingestion's real dict-shaped `constraints` into `ConstraintRule`s |
-| `adapters/http_out/manifest_source.py` | Where the manifest comes from — polls ingestion today, see "Notes for the team" |
+| `adapters/http_out/manifest_source.py` | Where the manifest comes from - polls ingestion today, see "Notes for the team" |
 | `adapters/http_out/demo_agent_client.py`, `coordinator_client.py` | Clients for the demo-agent's `/invoke` and the coordinator's `/events` |
 | `adapters/docker/docker_backend.py` | Simulated (default) and real (Docker SDK) instance-pool control |
 | `adapters/postgres/postgres.py` | The `StateWriter` implementations (logs, or upserts/inserts into the real `rosterd-postgres` schema) |
 | `adapters/llm/reviewer.py` | The second, autonomous reviewer agent deciding paused runs |
-| `adapters/observability/tracing.py` | OTel wrapper — every span/metric call degrades to a no-op if the SDK/collector isn't there |
-| `adapters/http_in/app.py` | FastAPI wiring — `create_app()` factory + the `Container` composition root |
+| `adapters/observability/tracing.py` | OTel wrapper - every span/metric call degrades to a no-op if the SDK/collector isn't there |
+| `adapters/http_in/app.py` | FastAPI wiring - `create_app()` factory + the `Container` composition root |
 | `main.py` | Thin entrypoint (`uvicorn main:app`) |
 | `docs/API.md` | curl-able examples for every endpoint |
 
@@ -169,13 +169,13 @@ A few places where the brief left room for judgment, called out explicitly
   `rejected` (no `queued`/`running`), and the endpoint table says
   `POST /dispatch` should "run it." So `accepted` means the kernel ran the
   task to completion (or to a kill) before the HTTP response returns.
-  `GET /runs/{run_id}` still exists for polling/detail — it's what the Task
-  Run & Violation screen actually renders — but nothing needs to poll it
+  `GET /runs/{run_id}` still exists for polling/detail - it's what the Task
+  Run & Violation screen actually renders - but nothing needs to poll it
   just to find out whether a dispatch finished.
 
 - **`direct_assignable` is enforced at the REST boundary.** An agent that
   isn't directly assignable is rejected by `POST /dispatch` before ever
-  calling `/invoke` — a fresh top-level assignment is exactly what
+  calling `/invoke` - a fresh top-level assignment is exactly what
   `direct_assignable: false` forbids. (Following `next_node` from another
   agent's own `InvokeResponse` is a LangGraph-internal routing concern for
   the demo agent, not something that goes through this REST contract.)
@@ -185,7 +185,7 @@ A few places where the brief left room for judgment, called out explicitly
   across nodes where `node` (the exact LangGraph node name) can't.
   `manifest.ManifestIndex` matches dispatch's `agent_id` on `id` because
   that's what Joy's own `AgentRow` example uses (`agent_id='fulfillment'`)
-  and what every kernel.py shape calls `agent_id` — but it also keeps a
+  and what every kernel.py shape calls `agent_id` - but it also keeps a
   `by_node` index, so switching the match key is a one-line change if `id`
   collisions turn out to matter more in practice.
 
@@ -215,19 +215,19 @@ A few places where the brief left room for judgment, called out explicitly
   confirmed one loads and dispatches for real.
 
 - **Postgres writes are plain `INSERT ... ON CONFLICT DO UPDATE` via
-  psycopg** — no ORM, no generated bindings. Unset
+  psycopg** - no ORM, no generated bindings. Unset
   `ROSTERD_KERNEL_POSTGRES_DSN` and the kernel logs every row it would
   have written instead, so the scaler and kill switch are fully exercised
   (see the test suite) without a running Postgres. The real schema lives
   at `../rosterd-postgres/schema.sql` and `docker-compose.yml` points this
-  kernel at a real Postgres by default — see the "Verified" section below.
+  kernel at a real Postgres by default - see the "Verified" section below.
   Live updates (the frontend's "Live" pill) come from a trigger in that
   schema firing `pg_notify` on every write, relayed to browsers by
-  `rosterd-coordinator`'s `adapters/http_in/live_ws.py` — this kernel
+  `rosterd-coordinator`'s `adapters/http_in/live_ws.py` - this kernel
   itself has no idea anyone's listening.
 
 - **Kill is lazy about "restart-for-next-dispatch."** There's no separate
-  "replace this exact instance" codepath — `killer.kill()` just removes the
+  "replace this exact instance" codepath - `killer.kill()` just removes the
   dead instance from the registry, and the next thing that needs capacity
   (the next dispatch, or the next scaler tick if the pool fell under
   `min_replicas`) spins a fresh one up through the normal growth path.
@@ -243,7 +243,7 @@ A few places where the brief left room for judgment, called out explicitly
 - **`simulate-load` dispatches each synthetic task on its own thread**,
   not sequentially through one blocking loop. `Dispatcher.dispatch()`
   blocks for the whole `/invoke` call, so firing requests one at a time
-  would never build up concurrent in-flight load — and without concurrent
+  would never build up concurrent in-flight load - and without concurrent
   load, the scaler formula never has a reason to grow the pool, which
   would make the flash-sale demo a no-op.
 
@@ -310,12 +310,12 @@ dispatch and a scaler tick request, not just that tracing doesn't crash.
 
 `rosterd-postgres/schema.sql` was applied to a real `postgres:16-alpine`
 container (not just read for syntax), and `PostgresStateWriter.write_agent`
-/ `.write_agent_metrics` were called directly against it — both rows
+/ `.write_agent_metrics` were called directly against it - both rows
 landed, confirmed via `SELECT * FROM agents` / `agent_metrics`. The
 NOTIFY trigger was verified the same way: `LISTEN agents;` in one session,
 an insert and then an upsert-triggering update in another, and both the
 insert and the update each produced an `Asynchronous notification "agents"`
-with the fresh row as JSON — the mechanism `rosterd-coordinator`'s
+with the fresh row as JSON - the mechanism `rosterd-coordinator`'s
 `live_ws.py` relay depends on. `tests/test_postgres.py` pins the SQL shape
 (the upsert's `ON CONFLICT (instance_id) DO UPDATE`, the metrics insert's
 lack of one) via a fake connection, for the regression suite; the live
@@ -330,7 +330,7 @@ dispatched real tasks through the kernel at it end to end.
 1. **`fulfillment`'s `max_qty` constraint was declared in the manifest and
    never enforced.** `constraints.yaml` sets `max_qty: 50` on `fulfillment`
    (mirrors `tools.ReserveInventoryArgs.qty = Field(le=50)`), and ingestion
-   correctly surfaces it in the confirmed manifest — but
+   correctly surfaces it in the confirmed manifest - but
    `legacy_constraints.py`'s `DEFAULT_LEGACY_CONSTRAINT_MAP` only had an
    entry for `max_refund_usd`, so `max_qty` was silently dropped (logged at
    debug, never surfaced). Confirmed live: dispatching a 200-unit reserve
@@ -343,9 +343,9 @@ dispatched real tasks through the kernel at it end to end.
    `tests/test_legacy_constraints.py::test_max_qty_becomes_a_constraint_rule_dict`.
 
 2. **Dispatching through `order_intake` doesn't enforce whatever node its
-   internal routing actually lands on — known limitation, not fixed.**
+   internal routing actually lands on - known limitation, not fixed.**
    `dispatch.py` resolves `entry = manifest_index.get(request.agent_id)`
-   and checks `entry.constraints` — the constraints of the *dispatched*
+   and checks `entry.constraints` - the constraints of the *dispatched*
    agent, not whichever LangGraph node the demo-agent's own internal
    routing ends up calling a tool from. `order_intake` has no constraints
    of its own (it never calls a tool directly) and always routes
@@ -355,23 +355,23 @@ dispatched real tasks through the kernel at it end to end.
    above only showed up as a live violation when dispatched straight at
    `fulfillment`; the identical over-limit request through `order_intake`
    silently passes. The kernel's contract is "check the dispatched agent's
-   constraints," which is what it does — this is a real modeling gap
+   constraints," which is what it does - this is a real modeling gap
    between that flat per-agent model and LangGraph's actual multi-node
    internal routing, not a bug in the check itself, and not something to
    guess a fix at unilaterally.
 
 3. **`refund_exception`'s `max_refund_usd` constraint was real and mapped
-   correctly, but unreachable through any live dispatch — fixed.** Was:
+   correctly, but unreachable through any live dispatch - fixed.** Was:
    `refund_exception` is `direct_assignable: false`, reachable only via
    `order_intake`'s `fraud_flagged` branch, and `refund_node.py`'s
-   `interrupt()` fires unconditionally on that same branch — so the
+   `interrupt()` fires unconditionally on that same branch - so the
    response always came back a pending-approval message with empty
    `tool_calls`, which finished the run as `done` with nothing ever
    checked, and there was no `/resume` anywhere in this kernel to push it
    further. Closed by giving `paused` its own `RunStatus`, a real
    `POST /runs/{run_id}/resume` that calls demo-agent's own (already
    working) `/resume` endpoint, and a reviewer agent that calls it
-   autonomously — see "Verified against the resume + reviewer agent"
+   autonomously - see "Verified against the resume + reviewer agent"
    below for the live proof, including the two-independent-checks
    guarantee: an approval only lifts demo-agent's `interrupt()` gate,
    never the kernel's own constraint check.
@@ -425,24 +425,24 @@ tests (`tests/test_run_store.py`, `tests/test_app.py`'s
 
 ## Known limitations
 
-- **Ingestion has no `scaling` field yet — every real manifest gets the
+- **Ingestion has no `scaling` field yet - every real manifest gets the
   same one policy.** `manifest.py`'s `AgentManifestEntry.scaling` is a
   per-agent field, but ingestion's real `GET /manifest/{id}` never sends
   one (see `manifest.py`'s and `manifest_source.py`'s module docstrings),
   so `IngestionPollManifestSource.fetch()` applies
   `ROSTERD_KERNEL_DEFAULT_{MIN,MAX}_REPLICAS`/`_TARGET_CONCURRENCY`
-  uniformly to every agent from a real ingest — confirmed live, this is
+  uniformly to every agent from a real ingest - confirmed live, this is
   what makes Federation's flash-sale button move the Monitor screen's pod
   count at all; without it (the ScalingPolicy model's own bare default is
   `max_replicas: 1`), every real-ingested manifest was silently capped at
   exactly one replica per agent forever, no matter how much load hit it.
-  One shared policy for every agent on a site is a real, current limit —
+  One shared policy for every agent on a site is a real, current limit -
   a busier `fulfillment` and a rarely-called `refund_exception` can't have
   different ceilings today. The real fix is a `scaling:` block ingestion
   reads from `constraints.yaml` and threads through per node; this is the
   stopgap until that lands.
 - **Single process, in-memory state.** The instance registry, run store,
-  and budget tracker all live in process memory — fine for one kernel per
+  and budget tracker all live in process memory - fine for one kernel per
   site (the brief's own architecture), not something a second worker
   process could share.
 - **The dispatch queue is a bounded poll, not a real queue.** At a full
