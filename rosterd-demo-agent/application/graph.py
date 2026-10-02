@@ -19,11 +19,18 @@ from typing import Annotated, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
-from brain import get_brain
-from refund_node import refund_exception_node
+# NOTE: pragmatic hexagonal exception -- application imports these two
+# adapters directly. No Protocol exists for "the thinking part" or "run a
+# tool and record the call" today (brain.py's own docstring confirms there's
+# no formal interface, just two interchangeable classes), so extracting a
+# port here would be inventing an abstraction this pass didn't ask for, not
+# just moving code. Same spirit as domain/manifest.py's exception in
+# rosterd-kernel.
+from adapters.llm.brain import get_brain
+from adapters.tooling.toolrun import attempt_tool
+from application.refund_node import refund_exception_node
+from domain.tools import charge_payment, check_stock, reserve_inventory
 from rosterd_contracts import GraphEdge, GraphSpec
-from toolrun import attempt_tool
-from tools import charge_payment, check_stock, reserve_inventory
 
 
 class AgentState(TypedDict, total=False):

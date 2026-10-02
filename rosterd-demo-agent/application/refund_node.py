@@ -9,9 +9,13 @@ tools.IssueRefundArgs (Field(le=100)) and is enforced by the kernel.
 
 from langgraph.types import interrupt
 
-from brain import get_brain
-from toolrun import attempt_tool
-from tools import issue_refund
+# NOTE: pragmatic hexagonal exception -- same reasoning as graph.py's: no
+# Protocol exists for "the thinking part" or "run a tool and record the
+# call" today, so this stays a direct adapter import rather than an
+# invented port.
+from adapters.llm.brain import get_brain
+from adapters.tooling.toolrun import attempt_tool
+from domain.tools import issue_refund
 
 
 def refund_exception_node(state: dict) -> dict:
