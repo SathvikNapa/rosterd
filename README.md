@@ -25,7 +25,7 @@ live cross-service state:
 Each service also builds and tests standalone - nothing here requires the
 whole stack running to work on one piece of it.
 
-## Architecture: hexagonal, deliberately
+## Architecture
 
 Every Python service follows the same shape:
 
