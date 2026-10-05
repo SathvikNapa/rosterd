@@ -70,6 +70,7 @@ Verified against five of LangChain's own public templates, every one matching th
 | `POST` | `/ask/parse` | Plain text in, a proposed task out |
 | `GET` | `/manifest/{manifest_id}` | Re-fetch a manifest without re-ingesting |
 | `GET` | `/manifest/{manifest_id}/provenance` | Commit, hashes, version, warnings |
+| `GET` | `/manifest/{manifest_id}/suggested-tasks` | A "try this" plain-language task per agent, derived from its own wiring (tools, purpose, numeric caps) -- see `domain/suggested_tasks.py` |
 | `GET` | `/manifests` | Everything ingested so far |
 | `GET` | `/healthz` | Liveness and effective settings |
 
@@ -116,10 +117,11 @@ Two rules govern the merge:
 | `ROSTERD_DATA_DIR` | `./data` | Where manifests are stored |
 | `ROSTERD_DISCOVERY_MODE` | `import` | `import` runs `get_graph()`; `static` never executes repo code |
 | `ROSTERD_GRAPH_SPEC` | - | Override graph location, e.g. `src/graph.py:workflow` |
+| `ROSTERD_MAX_GRAPH_CANDIDATES` | `5` | How many heuristic (non-`langgraph.json`) graph matches to try before giving up on import mode -- see `docs/DISCOVERY.md` "Locating the graph" |
 | `ROSTERD_ALLOWED_HOSTS` | - | Comma-separated clone allowlist. Empty means any host |
 | `ROSTERD_CLONE_TIMEOUT_SEC` | `60` | Ceiling on `git clone` |
 | `ROSTERD_IMPORT_TIMEOUT_SEC` | `60` | Ceiling on importing and introspecting the graph |
-| `ROSTERD_MAX_REPO_MB` | `100` | Reject clones larger than this |
+| `ROSTERD_MAX_REPO_MB` | `300` | Reject clones larger than this (raised from 100 after a real monorepo, `bytedance/deer-flow`, shallow-cloned to ~118MB on a completely normal layout -- frontend + docs + test fixtures alongside the actual Python backend) |
 | `ROSTERD_LOCAL_REPO_ROOT` | - | **Dev only.** Resolves `http://localhost/<name>` to `<root>/<name>` |
 | `ROSTERD_SANDBOX_INSTALL_ENABLED` | `true` | Fall back to a throwaway venv + real `uv sync`/`pip install -e` when the fast import fails on a missing dependency (see `sandbox.py`) |
 | `ROSTERD_SANDBOX_INSTALL_TIMEOUT_SEC` | `120` | Ceiling on that install step - separate from `ROSTERD_IMPORT_TIMEOUT_SEC`, since a real dependency install is much slower than importing an already-installed module |
@@ -148,7 +150,7 @@ When the fast import fails with what looks like a missing dependency (`ModuleNot
 
 It never turns a working fast-path ingest into a new way to fail: if there's nothing installable found, `uv`/`pip` is missing, or the install itself fails or times out, discovery just surfaces the *original* fast-path error, unchanged.
 
-**Verified live** against a real, non-trivial public repo (`bytedance/deer-flow`, a `uv`-workspace LangGraph project neither the demo repo nor any unit test fixture resembles) through three real, successive blockers, each confirmed by an actual failure and fixed in turn: a missing dependency (fixed by the sandboxed `uv sync` install), a dotted-module graph spec that only resolves once that install has happened (fixed by the dotted-import fallback), and a graph factory requiring a `RunnableConfig` argument rather than being zero-arg callable (fixed by an `obj({})` retry - `RunnableConfig` is an unvalidated `TypedDict`, so an empty dict is a reasonable stand-in purely for introspection). Ingestion got past all three. It then hit `deer-flow`'s own `config.yaml` requirement - a real runtime settings file the repo's own docs say to copy from `config.example.yaml` and fill in - which is a **genuine, application-specific requirement**, not an ingestion gap: no generic tool can synthesize another project's runtime configuration (API keys, model settings) on its behalf. That is the honest edge of what sandboxed installation can close.
+**Verified live** against a real, non-trivial public repo (`bytedance/deer-flow`, a `uv`-workspace LangGraph project neither the demo repo nor any unit test fixture resembles) through three real, successive blockers, each confirmed by an actual failure and fixed in turn: a missing dependency (fixed by the sandboxed `uv sync` install), a dotted-module graph spec that only resolves once that install has happened (fixed by the dotted-import fallback), and a graph factory requiring a `RunnableConfig` argument rather than being zero-arg callable (fixed by an `obj({})` retry - `RunnableConfig` is an unvalidated `TypedDict`, so an empty dict is a reasonable stand-in purely for introspection). Ingestion got past all three. It then hit `deer-flow`'s own `config.yaml` requirement - a real runtime settings file the repo's own docs say to copy from `config.example.yaml` and fill in - which is a **genuine, application-specific requirement**, not an ingestion gap: no generic tool can synthesize another project's runtime configuration (API keys, model settings) on its behalf. That is the honest edge of what sandboxed installation can close - but it no longer means the ingest fails outright. `discover()` catches exactly this shape of failure (anything the sandboxed install can't fix) and falls back to the static scan it already computes on every ingest, so `deer-flow` still comes back as a real, usable `mode: static` manifest instead of nothing - lower fidelity (no dynamically-built nodes, and a whole-repo AST scan on a monorepo this size picks up plenty of unrelated example/test nodes alongside the real ones), with a warning naming the exact `config.yaml` failure that caused the fallback, not a silent downgrade.
 
 For a clean, unambiguous success - not just "got further before hitting a different wall" - see the `scripts/probe.py --suite` table above: `react-agent`, `memory-agent`, `retrieval-agent-template`, and `data-enrichment` each have their own installable `pyproject.toml` and no runtime config file of their own to trip on, and all four went from the less-accurate `static` fallback to authoritative `import`-mode discovery once this shipped.
 
@@ -158,8 +160,8 @@ Hexagonal: `domain/` (pure logic + wire contracts) -> `application/` (the
 ingest pipeline, discovery's dispatch/merge logic) -> `adapters/` (repo
 cloning, manifest persistence, the sandboxed-subprocess introspection
 workers, the FastAPI boundary) -> `main.py` (thin entrypoint). Same
-convention as `rosterd-kernel`/`rosterd-coordinator`/`rosterd-demo-agent`.
-`config.py` stays at root, same as in the other three services.
+convention as `rosterd-kernel`/`rosterd-coordinator`.
+`config.py` stays at root, same as in the other two services.
 
 | File | Purpose |
 | --- | --- |
@@ -184,7 +186,7 @@ convention as `rosterd-kernel`/`rosterd-coordinator`/`rosterd-demo-agent`.
 ## Known limitations
 
 - **Single process.** The store's index is read-modify-written without a lock. Fine for one uvicorn worker; multi-worker needs a lock or a real database.
-- **Target repo dependencies** are handled automatically now - see "Sandboxed dependency installation" above - but only up to what a generic tool can reasonably do. A repo with its own required runtime config file (API keys, settings it cannot run without - confirmed against `bytedance/deer-flow`'s `config.yaml`) still fails, honestly, on that app-specific requirement rather than a missing-package one.
+- **Target repo dependencies** are handled automatically now - see "Sandboxed dependency installation" above - but only up to what a generic tool can reasonably do. A repo with its own required runtime config file (API keys, settings it cannot run without - confirmed against `bytedance/deer-flow`'s `config.yaml`) can't be imported here on that app-specific requirement rather than a missing-package one - no generic tool can synthesize another project's own secrets or settings. `discover()` falls back to the static scan for exactly this case rather than failing the ingest outright (see `docs/DISCOVERY.md`'s "Known limits"), so the manifest still comes back usable, just lower-fidelity, with a warning naming the real import failure.
 - **Tool attribution is name-based.** A tool reached through an alias or a registry lookup will be missed - declare it under `constraints.<node>.tools`.
 - **No retention policy.** Manifests accumulate, a few KB each. Deliberately no delete endpoint, since deleting one would break a kernel pinned to it.
 

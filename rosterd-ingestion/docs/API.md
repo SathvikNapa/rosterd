@@ -2,7 +2,7 @@
 
 Base URL in dev: `http://127.0.0.1:8000`. Interactive docs at `/docs`.
 
-Two endpoints are the contract from the brief and will not change without telling Person 1 and Person 3 first. The other three are additive conveniences — they add no fields to the contracted responses, so ignoring them is always safe.
+Two endpoints are the contract from the brief and will not change without telling Person 1 and Person 3 first. The other four are additive conveniences — they add no fields to the contracted responses, so ignoring them is always safe.
 
 | Method | Path | Contract? | Purpose |
 | --- | --- | --- | --- |
@@ -11,6 +11,7 @@ Two endpoints are the contract from the brief and will not change without tellin
 | `POST` | `/ask/parse` | yes | Plain text in, a proposed task out |
 | `GET` | `/manifest/{manifest_id}` | kept | Re-fetch a manifest without re-ingesting |
 | `GET` | `/manifest/{manifest_id}/provenance` | additive | Commit, hashes, version, warnings |
+| `GET` | `/manifest/{manifest_id}/suggested-tasks` | additive | A "try this" plain-language task per agent, from its own wiring |
 | `GET` | `/manifests` | additive | Everything ingested so far |
 | `GET` | `/healthz` | additive | Liveness and effective settings |
 
@@ -143,6 +144,32 @@ Everything about where a manifest came from. Additive, so it is not part of the 
 ```
 
 **Person 3:** `constraints_sha256` is what the Contracts screen's "Verified" badge should display, and `commit_sha` is what ties the screen back to a specific state of the repo. `warnings` is worth surfacing somewhere — it is where "this agent has no tools" and "nothing can route work to this agent" end up.
+
+## `GET /manifest/{manifest_id}/suggested-tasks`
+
+A "try this" plain-language task per agent, derived from its own discovered wiring — purpose, tools, numeric constraints, and whether it's directly dispatchable. Additive, computed fresh from the stored manifest each call, not persisted. No LLM call: a deterministic, verb-pattern match on the tool name/purpose, with numbers pulled from whatever this specific agent's own constraints actually declare — never invented. An agent with nothing to go on (no tools, no purpose) gets an empty list.
+
+```bash
+curl -s http://127.0.0.1:8000/manifest/mf_e71dec77c2999d95/suggested-tasks
+```
+
+```json
+{
+  "manifest_id": "mf_e71dec77c2999d95",
+  "agents": {
+    "triage": ["Ask it to classify request."],
+    "refund": [
+      "Refund $50 on order ORD-DEMO.",
+      "Refund $150 on order ORD-DEMO -- over the $100 cap, to see it caught."
+    ],
+    "escalation": [
+      "Ask it to create ticket. (reached indirectly, normally via refund_node or triage_node -- not directly assignable)"
+    ]
+  }
+}
+```
+
+**Person 3:** these are meant to be pasted straight into the Ask screen's text box — not a claim about how the agent will actually behave, just a starting point for someone who didn't write this repo and has no idea what a reasonable request even looks like for it.
 
 ## Errors
 

@@ -12,8 +12,8 @@ from __future__ import annotations
 from conftest import FakeHttpxResponse
 
 
-def test_a_successful_dispatch_opens_dispatch_and_constraint_check_spans(client, container, fake_demo_agent):
-    fake_demo_agent.set(lambda payload: FakeHttpxResponse(200, {"output": "ok", "tool_calls": []}))
+def test_a_successful_dispatch_opens_dispatch_and_constraint_check_spans(client, container, fake_agent):
+    fake_agent.set(lambda payload: FakeHttpxResponse(200, {"output": "ok", "tool_calls": []}))
 
     span_names = []
     real_span = container.telemetry.span

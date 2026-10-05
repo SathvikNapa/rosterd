@@ -27,12 +27,10 @@ const LINKS = [
   { to: '/ask', label: 'Ask' },
   { to: '/roster', label: 'Roster' },
   { to: '/contracts', label: 'Contracts' },
-  { to: '/federation', label: 'Federation' },
   { to: '/monitor', label: 'Monitor' },
 ];
 
 const TRANSPORT_COPY: Record<LiveTransport, { label: string; tone: string; title: string }> = {
-  demo: { label: 'Demo data', tone: 'warn', title: 'VITE_ROSTERD_MODE=demo — no backend is being read.' },
   websocket: {
     label: 'Live',
     tone: 'ok',

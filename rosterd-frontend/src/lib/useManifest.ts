@@ -12,11 +12,9 @@
  * means no badges, not a failed screen.
  */
 import { useCallback, useEffect, useState } from 'react';
-import { getManifest } from './api/ingestion';
+import { getManifest, getSuggestedTasks } from './api/ingestion';
 import { getKernelManifest } from './api/kernel';
-import { isDemo } from './config';
 import { useLive } from './live/LiveProvider';
-import { DEMO_DRAFT_MANIFEST_ID, demoDraftManifest, demoKernelEntries, demoManifest } from './live/demo';
 import { useSession } from './session';
 import type { KernelManifestEntry, ManifestResponse } from './types';
 
@@ -24,6 +22,10 @@ interface UseManifestResult {
   manifest: ManifestResponse | null;
   kernelEntries: KernelManifestEntry[];
   kernelManifestId: string | null;
+  /** agent id -> its "try this" suggestions. Empty object, never an
+   * error, if the endpoint is unreachable -- a missing suggestion list
+   * degrades the screen, it doesn't fail it. */
+  suggestedTasks: Record<string, string[]>;
   loading: boolean;
   error: string | null;
   reload: () => void;
@@ -32,11 +34,10 @@ interface UseManifestResult {
 export function useManifest(manifestId: string | null): UseManifestResult {
   const session = useSession();
   const { tables } = useLive();
-  const [manifest, setManifest] = useState<ManifestResponse | null>(
-    isDemo ? demoManifest : (session.manifest ?? null),
-  );
-  const [kernelEntries, setKernelEntries] = useState<KernelManifestEntry[]>(isDemo ? demoKernelEntries : []);
+  const [manifest, setManifest] = useState<ManifestResponse | null>(session.manifest ?? null);
+  const [kernelEntries, setKernelEntries] = useState<KernelManifestEntry[]>([]);
   const [kernelManifestId, setKernelManifestId] = useState<string | null>(null);
+  const [suggestedTasks, setSuggestedTasks] = useState<Record<string, string[]>>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [nonce, setNonce] = useState(0);
@@ -47,10 +48,6 @@ export function useManifest(manifestId: string | null): UseManifestResult {
   const liveRow = manifestId ? tables.manifests.find((row) => row.manifest_id === manifestId) : undefined;
 
   useEffect(() => {
-    if (isDemo) {
-      setManifest(manifestId === DEMO_DRAFT_MANIFEST_ID ? demoDraftManifest : demoManifest);
-      return;
-    }
     if (!manifestId) return;
     const controller = new AbortController();
 
@@ -89,7 +86,6 @@ export function useManifest(manifestId: string | null): UseManifestResult {
   }, [manifestId, liveRow?.manifest_id, liveRow?.version, nonce]);
 
   useEffect(() => {
-    if (isDemo) return;
     const controller = new AbortController();
     getKernelManifest(controller.signal)
       .then((response) => {
@@ -104,5 +100,22 @@ export function useManifest(manifestId: string | null): UseManifestResult {
     return () => controller.abort();
   }, [manifestId, nonce]);
 
-  return { manifest, kernelEntries, kernelManifestId, loading, error, reload };
+  useEffect(() => {
+    if (!manifestId) {
+      setSuggestedTasks({});
+      return;
+    }
+    const controller = new AbortController();
+    getSuggestedTasks(manifestId, controller.signal)
+      .then((response) => setSuggestedTasks(response.agents))
+      .catch(() => {
+        if (controller.signal.aborted) return;
+        // Additive endpoint -- unreachable just means no suggestions, not
+        // a failed screen (same degrade-gracefully contract as kernelEntries).
+        setSuggestedTasks({});
+      });
+    return () => controller.abort();
+  }, [manifestId, nonce]);
+
+  return { manifest, kernelEntries, kernelManifestId, suggestedTasks, loading, error, reload };
 }

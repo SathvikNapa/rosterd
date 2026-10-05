@@ -20,7 +20,7 @@ Plus small additive debug endpoints, same spirit as rosterd-ingestion's own
 
 Also additive, but load-bearing rather than debug-only: `POST
 /runs/{run_id}/resume` -- not in the original brief, added because nothing
-existed to unstick a run demo-agent's own interrupt() paused (see
+existed to unstick a run the governed agent's own interrupt() paused (see
 dispatch.py's module docstring). Called either by a human (via this
 endpoint directly) or by reviewer.py's ReviewerLoop deciding on its own.
 
@@ -44,7 +44,7 @@ from fastapi.responses import JSONResponse
 
 from adapters.docker.docker_backend import build_docker_backend
 from adapters.http_out.coordinator_client import CoordinatorClient
-from adapters.http_out.demo_agent_client import DemoAgentClient
+from adapters.http_out.agent_client import AgentClient
 from adapters.http_out.manifest_source import IngestionPollManifestSource, ManifestSubscription, StaticManifestSource
 from adapters.llm.reviewer import ReviewerLoop
 from adapters.llm.reviewer import llm_key_present as reviewer_llm_key_present
@@ -91,7 +91,7 @@ class Container:
     budget_tracker: BudgetTracker
     policy_store: PolicyStore
     run_store: RunStore
-    demo_agent_client: DemoAgentClient
+    agent_client: AgentClient
     coordinator_client: CoordinatorClient
     dispatcher: Dispatcher
     scaler: ScalerLoop
@@ -118,7 +118,7 @@ def build_container(
     budget_tracker = BudgetTracker(settings)
     policy_store = PolicyStore()
     run_store = RunStore()
-    demo_agent_client = DemoAgentClient(settings, telemetry)
+    agent_client = AgentClient(settings, telemetry)
     coordinator_client = CoordinatorClient(settings, telemetry)
 
     dispatcher = Dispatcher(
@@ -126,7 +126,7 @@ def build_container(
         manifest_index=manifest_index,
         registry=registry,
         docker_backend=docker_backend,
-        demo_agent_client=demo_agent_client,
+        agent_client=agent_client,
         coordinator_client=coordinator_client,
         budget_tracker=budget_tracker,
         run_store=run_store,
@@ -170,7 +170,7 @@ def build_container(
         budget_tracker=budget_tracker,
         policy_store=policy_store,
         run_store=run_store,
-        demo_agent_client=demo_agent_client,
+        agent_client=agent_client,
         coordinator_client=coordinator_client,
         dispatcher=dispatcher,
         scaler=scaler,
@@ -198,7 +198,7 @@ def create_app(settings: Settings | None = None, *, container: Container | None 
     fastapi_app = FastAPI(
         title=f"rosterd kernel service ({settings.site_id})",
         version="1.0.0",
-        description="Dispatches tasks to this site's demo agent pool, enforces the confirmed "
+        description="Dispatches tasks to this site's governed agent pool, enforces the confirmed "
         "manifest's constraints, autoscales, and exports traces + metrics.",
         lifespan=lifespan,
     )

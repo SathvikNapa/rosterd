@@ -15,11 +15,10 @@ import { Stagger } from '../components/motion';
 import { Banner, Button, Label, TraceId, TraceLink } from '../components/ui';
 import { getRun, killRun } from '../lib/api/kernel';
 import { describeError } from '../lib/api/http';
-import { config, isDemo } from '../lib/config';
+import { config } from '../lib/config';
 import { clockTime, poolStatusLabel, poolTone, relativeTime, titleize } from '../lib/format';
 import { EASE_OUT, LIVE_PULSE, POP } from '../lib/motion';
 import { useLive } from '../lib/live/LiveProvider';
-import { demoRun } from '../lib/live/demo';
 import { orderPools, poolsForSite } from '../lib/selectors';
 import { useManifest } from '../lib/useManifest';
 import { useSession } from '../lib/session';
@@ -47,7 +46,7 @@ export function RunDetail() {
   const session = useSession();
   const { tables } = useLive();
 
-  const [run, setRun] = useState<RunResponse | null>(isDemo ? demoRun : null);
+  const [run, setRun] = useState<RunResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [killing, setKilling] = useState(false);
 
@@ -62,7 +61,7 @@ export function RunDetail() {
   );
 
   useEffect(() => {
-    if (isDemo || !runId) return;
+    if (!runId) return;
     const controller = new AbortController();
 
     const poll = () => {
@@ -280,7 +279,7 @@ export function RunDetail() {
             <div className="row" style={{ gap: 12 }}>
               <TraceLink traceId={traceId} />
               {run?.status === 'working' && (
-                <Button className="btn--ghost" onClick={kill} disabled={killing || isDemo}>
+                <Button className="btn--ghost" onClick={kill} disabled={killing}>
                   {killing ? 'Killing…' : 'Kill run'}
                 </Button>
               )}

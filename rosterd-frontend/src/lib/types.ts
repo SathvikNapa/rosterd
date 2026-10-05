@@ -95,6 +95,15 @@ export interface Provenance {
   warnings?: string[];
 }
 
+/** GET /manifest/{id}/suggested-tasks -- additive, keyed by agent id. A
+ * "try this" plain-language task per agent, derived from its own
+ * discovered wiring (rosterd-ingestion/domain/suggested_tasks.py). An
+ * agent with nothing to go on gets an empty array, not a missing key. */
+export interface SuggestedTasksResponse {
+  manifest_id: string;
+  agents: Record<string, string[]>;
+}
+
 // ---------------------------------------------------------------- kernel
 
 /** kernel.TaskSpec — note `id` is required; ingestion's ParsedTask has none,
@@ -142,11 +151,6 @@ export interface AgentInstance {
 export interface InstancesResponse {
   agent_id: string;
   instances: AgentInstance[];
-}
-
-export interface SimulateLoadResponse {
-  agent_id: string;
-  dispatched: number;
 }
 
 /** kernel/manifest.py ConstraintRule — carries the source + confidence

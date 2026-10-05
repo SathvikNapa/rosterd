@@ -1,20 +1,23 @@
 """ReviewerLoop: a second, autonomous agent that decides runs paused at an
-interrupt() -- rosterd's own human-in-the-loop gate (demo-agent's
-refund_node.py, for fraud-flagged/high-value orders).
+interrupt() -- rosterd's own human-in-the-loop gate, defined by whichever
+governed agent's own node calls it (e.g. a refund node, for
+fraud-flagged/high-value orders).
 
 Mirrors scaler.py's background-thread pattern (`start()`/`stop()`, a daemon
 thread ticking every `reviewer_interval_sec`). Every tick, for every run
 currently `paused` (run_store.paused_run_ids()), it asks a real LLM whether
-to approve or deny -- same provider-picking convention as
-rosterd-demo-agent/brain.py's LLMBrain: `GROK_API_KEY` / `XAI_API_KEY`
-first, then `ANTHROPIC_API_KEY`. Duplicated rather than imported: kernel and
-demo-agent are independently deployable services, same reasoning as the
-verbatim shared.py copies every service in this repo already carries.
+to approve or deny -- the same kind of auto-detect-a-provider-key
+convention a governed agent's own LLM mode might use: `GROK_API_KEY` /
+`XAI_API_KEY` first, then `ANTHROPIC_API_KEY`. Kept independent rather
+than shared: the kernel and whatever agent it governs are independently
+deployable services, same reasoning behind every wire-contract type this
+repo keeps in libs/rosterd-contracts instead of a tighter coupling.
 
 The decision is deliberately NOT the last word. `dispatcher.resume_run()`
 re-runs the confirmed manifest's own constraint_check afterward regardless
-of what the reviewer decided -- an approval only lifts demo-agent's
-interrupt() gate, never the kernel's hard limits (max_refund_usd, etc.).
+of what the reviewer decided -- an approval only lifts the governed
+agent's own interrupt() gate, never the kernel's hard limits (e.g. a
+max_refund_usd cap).
 Two independent agents making two independent checks: judgment from one,
 policy from the other. That split is also why the system prompt below
 explicitly tells the reviewer not to bother re-deriving numeric caps -- the

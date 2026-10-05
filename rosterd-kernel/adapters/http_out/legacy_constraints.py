@@ -3,32 +3,21 @@ into the finalized brief's `list[ConstraintRule]`.
 
 Confirmed by actually running ingestion and pointing a kernel at it (see
 manifest_source.py's module docstring): `AgentManifestEntry.constraints` in
-`rosterd-ingestion/ingestion.py` is still a flat
+`rosterd-ingestion/domain/ingestion.py` is still a flat
 `{max_refund_usd, requires_prior_node, ...}` object, human-authored in
 `constraints.yaml`, not the schema-inferred `ConstraintRule` list this
-kernel's own contract (and Param's own brief) specify. Without this module,
-every real confirmed manifest fails Pydantic validation outright.
+kernel's own contract specifies. Without this module, every real
+confirmed manifest fails Pydantic validation outright.
 
 This is deliberately narrow, not a generic solver: it maps *known,
 named* legacy keys to a field path, by hand, because there is no way to
 derive "which tool argument does max_refund_usd constrain" from the flat
-number alone -- that's domain knowledge about a specific demo-agent's tool
-schema, not something inferable from `{"max_refund_usd": 100}`. That's
-exactly why it's a constant here, not something spread across the parsing
-code: whichever demo-agent a site is actually pointed at, this is the one
+number alone -- that's domain knowledge about a specific governed agent's
+tool schema, not something inferable from `{"max_refund_usd": 100}`.
+That's exactly why it's a constant here, not something spread across the
+parsing code: whichever agent repo a site is actually pointed at, with
+whatever its own tools happen to name their arguments, this is the one
 place to repoint it.
-
-Updated for `rosterd-demo-agent` (Shruti's real service, now in this repo):
-her `issue_refund(order_id: str, amount: float)` names the arg `amount`,
-not `amount_usd` -- the field path below was changed to match. The earlier
-value (`tool_calls[*].args.amount_usd`) matched
-`rosterd-ingestion/demo-agent/tools.py`'s bundled discovery fixture, which
-is exercised by ingestion's own probe/discovery tests but is not the
-service any real kernel is ever configured against
-(`ROSTERD_KERNEL_SIMULATED_AGENT_URL` / the real Docker network point at
-`rosterd-demo-agent`, never at ingestion's fixture) -- see the README's
-"Verified against the real ingestion service" section for the run that
-used the old value, and the note just below it for this change.
 
 `confidence` is deliberately `low` for every legacy-adapted rule (never
 `high`, which `manifest.py`'s own `ConstraintRule` reserves for a real
@@ -67,25 +56,20 @@ class LegacyMapping:
     op: Literal["lte", "gte", "eq", "in", "not_in"]
 
 
-#: Edit this to match whatever demo-agent is actually running.
-#: Keyed by the legacy AgentConstraints field name.
+#: Edit this to match whatever agent repo a site is actually pointed at --
+#: specifically, whatever its own tools name their arguments. Keyed by the
+#: legacy AgentConstraints field name.
 DEFAULT_LEGACY_CONSTRAINT_MAP: dict[str, LegacyMapping] = {
     "max_refund_usd": LegacyMapping(field="tool_calls[*].args.amount", op="lte"),
-    # rosterd-demo-agent's constraints.yaml declares this on `fulfillment`
-    # (mirrors tools.ReserveInventoryArgs.qty = Field(le=50)); AgentConstraints'
-    # extra="allow" lets it through ingestion, but nothing mapped it to a
-    # field path until now -- confirmed live (dispatch a 200-unit reserve
-    # through the real kernel + rosterd-demo-agent: `status: done,
-    # violation: null` with this key absent from the map). Unlike
-    # max_refund_usd, this one's reachable through a live, un-interrupted
-    # dispatch (fulfillment_node has no interrupt() gate), so it's the
-    # constraint a real demo can actually trigger end to end.
+    # A common shape: a reservation/inventory tool capping a quantity arg
+    # named `qty`. AgentConstraints' extra="allow" lets a key like this
+    # through ingestion even with no mapping, so without an entry here it
+    # would silently never become an enforceable rule.
     "max_qty": LegacyMapping(field="tool_calls[*].args.qty", op="lte"),
-    # rosterd-demo-agent's constraints.yaml declares this on `payment`
-    # (mirrors tools.ChargePaymentArgs.amount = Field(le=2000)), added
-    # alongside the catalog/payment agents for the Black Friday / peak-load
-    # scenario. payment_node has no interrupt() gate (same as fulfillment),
-    # so this is reachable through a live, un-interrupted dispatch too.
+    # A common shape: a payment/charge tool capping an amount arg named
+    # `amount`, same field name as the refund cap above but on a
+    # different tool -- the kernel evaluates each rule against whichever
+    # tool call it actually matches.
     "max_charge_usd": LegacyMapping(field="tool_calls[*].args.amount", op="lte"),
 }
 

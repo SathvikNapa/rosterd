@@ -21,7 +21,7 @@ import { Badge, Banner, Button, Criterion, Label } from '../components/ui';
 import { EASE_OUT, POP, SPRING, TAP_PRESS } from '../lib/motion';
 import { dispatch } from '../lib/api/kernel';
 import { describeError } from '../lib/api/http';
-import { config, isDemo } from '../lib/config';
+import { config } from '../lib/config';
 import { initial, poolStatusLabel, poolTone, priorityTone, relativeTime, shortTime, titleize } from '../lib/format';
 import { useLive } from '../lib/live/LiveProvider';
 import { agentDisplayName, orderPools, poolsForSite } from '../lib/selectors';
@@ -484,7 +484,7 @@ export function Roster() {
                     <Button className="btn--ghost" onClick={() => setDraft(null)}>
                       Cancel
                     </Button>
-                    <Button onClick={schedule} disabled={busy || isDemo}>
+                    <Button onClick={schedule} disabled={busy}>
                       {busy ? 'Dispatching…' : 'Schedule task'}
                     </Button>
                   </>

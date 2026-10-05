@@ -93,26 +93,25 @@ class Settings:
     #: manifest loaded, agent_metrics kept recording current_replicas=1,
     #: desired_replicas=1 no matter how much load /simulate-load pushed
     #: through, because desired is clamped to max_replicas=1 regardless of
-    #: queue depth. That silently breaks the autoscaling half of the demo
-    #: (Federation's flash-sale button, the Monitor screen) for any manifest
-    #: that came from a real ingest, not a hand-built test fixture. These
-    #: three settings are what IngestionPollManifestSource.fetch() applies
-    #: uniformly to every entry from a real ingestion poll, standing in for
-    #: a per-agent scaling policy until ingestion can actually express one.
-    #: Raised to double digits for the Black Friday / peak-load scenario
-    #: (order_intake, catalog, fulfillment, and payment all spiking at
-    #: once, not just one agent) -- verified live, same method as the
-    #: original 1->5 fix: fire real concurrent load through
+    #: queue depth. That silently breaks autoscaling (the Monitor screen
+    #: never shows a pool climb) for any manifest that came from a real
+    #: ingest, not a hand-built test fixture. These three settings are what
+    #: IngestionPollManifestSource.fetch() applies uniformly to every entry
+    #: from a real ingestion poll, standing in for a per-agent scaling
+    #: policy until ingestion can actually express one.
+    #: Raised to double digits for a real peak-load scenario (several
+    #: agents spiking at once, not just one) -- verified live, same method
+    #: as the original 1->5 fix: fire real concurrent load through
     #: /agents/{id}/simulate-load across multiple agents simultaneously and
     #: watch current_replicas actually climb into double digits in
     #: Postgres's agent_metrics, not just past the old ceiling of 5.
     #: Trimmed from 20 to 10 after a real report: the ORIGINAL bottleneck
-    #: was scripts/black_friday_load.py's request volume (thousands of
-    #: real, near-simultaneous OS threads each holding a live HTTP
-    #: connection -- that's what pegged a machine, not this ceiling number
-    #: by itself), but a lower ceiling also means less scaler/coordinator/
-    #: Postgres bookkeeping churn per tick during a scale event, so both
-    #: were turned down together. 10 is still double digits.
+    #: was scripts/load_test.py's request volume (thousands of real,
+    #: near-simultaneous OS threads each holding a live HTTP connection --
+    #: that's what pegged a machine, not this ceiling number by itself),
+    #: but a lower ceiling also means less scaler/coordinator/Postgres
+    #: bookkeeping churn per tick during a scale event, so both were
+    #: turned down together. 10 is still double digits.
     default_min_replicas: int = field(
         default_factory=lambda: _env_int("ROSTERD_KERNEL_DEFAULT_MIN_REPLICAS", 1)
     )
@@ -127,9 +126,9 @@ class Settings:
     #: "simulated" (default) simulates the instance *pool* without a Docker
     #: daemon, so the kernel runs and is testable before anyone's image is
     #: built -- every simulated instance still forwards to a real,
-    #: genuinely running demo-agent, so dispatch, constraints, and budget
-    #: enforcement all happen for real; only replica count is simulated,
-    #: never the agent itself. "real" uses the Docker SDK. See
+    #: genuinely running governed-agent process, so dispatch, constraints,
+    #: and budget enforcement all happen for real; only replica count is
+    #: simulated, never the agent itself. "real" uses the Docker SDK. See
     #: docker_backend.py.
     docker_mode: str = field(
         default_factory=lambda: os.environ.get("ROSTERD_KERNEL_DOCKER_MODE", "simulated").strip().lower()
@@ -147,10 +146,10 @@ class Settings:
     #: real mode only: {agent_id: image}. Falls back to default_agent_image.
     agent_image_map: dict[str, str] = field(default_factory=lambda: _env_json_dict("ROSTERD_KERNEL_AGENT_IMAGES"))
     default_agent_image: str = field(
-        default_factory=lambda: os.environ.get("ROSTERD_KERNEL_DEFAULT_AGENT_IMAGE", "rosterd/demo-agent:latest")
+        default_factory=lambda: os.environ.get("ROSTERD_KERNEL_DEFAULT_AGENT_IMAGE", "rosterd/agent:latest")
     )
-    #: real mode only: the port Shruti's /invoke listens on inside its container.
-    demo_agent_port: int = field(default_factory=lambda: _env_int("ROSTERD_KERNEL_DEMO_AGENT_PORT", 8000))
+    #: real mode only: the port the governed agent's /invoke listens on inside its container.
+    agent_port: int = field(default_factory=lambda: _env_int("ROSTERD_KERNEL_AGENT_PORT", 8000))
 
     # ---- dispatch ----------------------------------------------------------
     dispatch_timeout_sec: float = field(
@@ -171,12 +170,12 @@ class Settings:
 
     # ---- scaling -------------------------------------------------------------
     scaler_interval_sec: float = field(default_factory=lambda: _env_float("ROSTERD_KERNEL_SCALER_INTERVAL_SEC", 5.0))
-    #: Demo-friendly override: when set, replaces every agent's
+    #: Operator override: when set, replaces every agent's
     #: scale_down_after_idle_seconds so scale-down is watchable live
     #: (15-30s) instead of a realistic production cooldown. Also settable
     #: per-run via SimulateLoadRequest.scale_down_after_idle_seconds_override.
-    demo_idle_seconds: int | None = field(
-        default_factory=lambda: _env_optional_int("ROSTERD_KERNEL_DEMO_IDLE_SECONDS")
+    override_idle_seconds: int | None = field(
+        default_factory=lambda: _env_optional_int("ROSTERD_KERNEL_OVERRIDE_IDLE_SECONDS")
     )
 
     # ---- coordinator -----------------------------------------------------------
@@ -199,8 +198,9 @@ class Settings:
     # A second, autonomous agent that decides runs paused at an interrupt(),
     # instead of leaving them stuck until a human happens to call
     # POST /runs/{run_id}/resume. Auto-enabled whenever a provider key is
-    # present (same convention as rosterd-demo-agent's AGENT_MODE=llm gate)
-    # unless explicitly turned off -- no separate opt-in flag to forget.
+    # present (the same auto-detect-a-provider-key convention a governed
+    # agent's own LLM-mode gate would use) unless explicitly turned off --
+    # no separate opt-in flag to forget.
     reviewer_enabled: bool = field(default_factory=lambda: _env_bool("ROSTERD_KERNEL_REVIEWER_ENABLED", True))
     reviewer_interval_sec: float = field(
         default_factory=lambda: _env_float("ROSTERD_KERNEL_REVIEWER_INTERVAL_SEC", 4.0)

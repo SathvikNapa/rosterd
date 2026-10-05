@@ -1,7 +1,8 @@
 """The POST /dispatch pipeline: validate against the confirmed manifest,
 obtain an instance (idle pick, spin-up, or a bounded queue wait at cap),
-invoke the demo agent with a hard timeout, evaluate constraints, enforce
-budget, kill on any breach, and report the outcome to the coordinator.
+invoke the governed agent with a hard timeout, evaluate constraints,
+enforce budget, kill on any breach, and report the outcome to the
+coordinator.
 
 Dispatch is synchronous end to end within the POST /dispatch request. That
 reading of the contract: kernel.py's DispatchResponse carries only
@@ -21,11 +22,11 @@ nothing was actually completed yet, on purpose. Getting it unstuck is
 /runs/{run_id}/resume or by reviewer.py's ReviewerLoop deciding on its own.
 Previously there was no resume path at all: a paused run just got marked
 `done` (see `_settle`'s docstring), indistinguishable from actually
-finishing -- the misdirection-refund demo this system's narrative leans on
-was consequently unreachable end to end. Fixed by giving `paused` its own
-RunStatus (shared.py) and a real path back through demo-agent's own
-`/resume` endpoint (which already existed and worked; nothing in the
-kernel ever called it).
+finishing -- an entire class of human-in-the-loop scenario (anything
+gated behind interrupt()) was consequently unreachable end to end. Fixed
+by giving `paused` its own RunStatus (rosterd_contracts) and a real path
+back through the governed agent's own `/resume` endpoint (which already
+existed and worked; nothing in the kernel ever called it).
 """
 from __future__ import annotations
 
@@ -34,14 +35,14 @@ import time
 import uuid
 from datetime import datetime, timezone
 
-from adapters.http_out.coordinator_client import CoordinatorClient, EventRequest
-from adapters.http_out.demo_agent_client import (
+from adapters.http_out.agent_client import (
     PENDING_HUMAN_APPROVAL_RE,
-    DemoAgentClient,
-    DemoAgentError,
-    DemoAgentTimeout,
+    AgentClient,
+    AgentError,
+    AgentTimeout,
     InvokeResponse,
 )
+from adapters.http_out.coordinator_client import CoordinatorClient, EventRequest
 # NOTE: pragmatic hexagonal exception -- application importing an adapter
 # directly for cross-cutting observability, same as rosterd-coordinator's
 # app.py. Instrumentation is infrastructure, not swappable business logic;
@@ -62,13 +63,14 @@ from rosterd_contracts import RunStatus, Violation
 
 logger = logging.getLogger("rosterd.kernel.dispatch")
 
-#: What `toolrun.attempt_tool` (rosterd-demo-agent) writes into a
+#: What a governed agent's own tool-invocation helper (the convention
+#: documented in rosterd's agent-repo guide) writes into a
 #: `tool_calls[].result` when the args it was actually given fail the
 #: tool's own Pydantic schema (e.g. a negative qty, once a lower bound
 #: exists) -- distinct from a kernel-side manifest-rule violation, which
 #: kills the run. This one doesn't kill anything: the graph still finished
 #: normally, it just tried an invalid value. Kept a string match rather
-#: than a typed field because InvokeResponse/ToolCall (demo_agent_client.py)
+#: than a typed field because InvokeResponse/ToolCall (agent_client.py)
 #: are the wire contract every agent's own service returns verbatim --
 #: widening that schema for one kernel-side concern isn't this repo's call.
 _SCHEMA_REJECTED_PREFIX = "REJECTED by tool schema:"
@@ -107,7 +109,7 @@ class Dispatcher:
         manifest_index: ManifestIndex,
         registry: InstanceRegistry,
         docker_backend: DockerBackend,
-        demo_agent_client: DemoAgentClient,
+        agent_client: AgentClient,
         coordinator_client: CoordinatorClient,
         budget_tracker: BudgetTracker,
         run_store: RunStore,
@@ -119,7 +121,7 @@ class Dispatcher:
         self._manifest_index = manifest_index
         self._registry = registry
         self._docker_backend = docker_backend
-        self._demo_agent_client = demo_agent_client
+        self._agent_client = agent_client
         self._coordinator_client = coordinator_client
         self._budget_tracker = budget_tracker
         self._run_store = run_store
@@ -231,10 +233,10 @@ class Dispatcher:
         base_url = self._docker_backend.invoke_base_url(instance)
 
         try:
-            response = self._demo_agent_client.invoke(
+            response = self._agent_client.invoke(
                 base_url, entry.node, text, context, timeout=self._settings.dispatch_timeout_sec
             )
-        except DemoAgentTimeout:
+        except AgentTimeout:
             self._finish_killed(
                 run_id,
                 request.agent_id,
@@ -247,7 +249,7 @@ class Dispatcher:
                 span,
             )
             return
-        except DemoAgentError as exc:
+        except AgentError as exc:
             if self._run_store.is_kill_requested(run_id):
                 self._finish_killed(run_id, request.agent_id, instance, None, span, reason="manual_kill")
             else:
@@ -263,14 +265,14 @@ class Dispatcher:
         self._settle(run_id, request.agent_id, entry, instance, response, span)
 
     def _settle(self, run_id, agent_id: str, entry, instance, response: InvokeResponse, span) -> None:
-        """Given a real InvokeResponse from the demo agent, either pause the
+        """Given a real InvokeResponse from the governed agent, either pause the
         run (its interrupt() fired again) or run the constraint/budget
         checks a fresh response always gets, then finish done/killed.
         Shared between `_run_dispatch` (the first call) and `resume_run`
         (continuing a paused one) so resuming is held to exactly the same
         enforcement a fresh dispatch would be -- a reviewer agent (or a
         human) approving something does not bypass the kernel's own
-        constraint check, only demo-agent's interrupt() gate.
+        constraint check, only the governed agent's interrupt() gate.
 
         `entry` is whichever agent was originally dispatched, but the tool
         call actually being checked can have come from a DIFFERENT node the
@@ -360,11 +362,11 @@ class Dispatcher:
         """Continues a run paused at an interrupt() -- called both by
         POST /runs/{run_id}/resume (a human, via the API) and by
         reviewer.py's ReviewerLoop (an agent, deciding autonomously). Same
-        path either way: calls demo-agent's real /resume, then re-enforces
+        path either way: calls the governed agent's real /resume, then re-enforces
         the confirmed manifest's constraints through the exact same
         `_settle` a fresh dispatch uses -- an approval from either a human
         or the reviewer agent still gets killed if it actually violates the
-        contract; approval only lifts demo-agent's interrupt() gate, never
+        contract; approval only lifts the governed agent's interrupt() gate, never
         the kernel's own check.
         """
         run = self._run_store.get(run_id)
@@ -406,10 +408,10 @@ class Dispatcher:
             },
         ) as span:
             try:
-                response = self._demo_agent_client.resume(
+                response = self._agent_client.resume(
                     base_url, thread_id, approved, timeout=self._settings.dispatch_timeout_sec
                 )
-            except DemoAgentTimeout:
+            except AgentTimeout:
                 self._finish_killed(
                     run_id,
                     agent_id,
@@ -420,7 +422,7 @@ class Dispatcher:
                     span,
                 )
                 return
-            except DemoAgentError as exc:
+            except AgentError as exc:
                 self._finish_killed(
                     run_id,
                     agent_id,

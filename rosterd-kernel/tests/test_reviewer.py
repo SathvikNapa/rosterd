@@ -1,6 +1,6 @@
 """ReviewerLoop: decides paused runs with an injected structured_call (same
-testability pattern as rosterd-demo-agent/brain.py's LLMBrain), never a live
-LLM call.
+testability pattern a governed agent's own LLM-brain adapter would use),
+never a live LLM call.
 """
 from __future__ import annotations
 

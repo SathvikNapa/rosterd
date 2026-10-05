@@ -1,5 +1,5 @@
 """Shared wire-contract types used across rosterd-ingestion, rosterd-kernel,
-rosterd-demo-agent, and rosterd-coordinator.
+and rosterd-coordinator.
 
 The single source of truth for these shapes -- see this package's own
 README for why this is a real installed package rather than the

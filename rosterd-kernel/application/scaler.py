@@ -62,8 +62,8 @@ class ScalerLoop:
     def _effective_idle_seconds(self, policy: ScalingPolicy) -> int:
         # Demo-friendly override: short enough to watch scale-down happen
         # live instead of waiting through a realistic production cooldown.
-        if self._settings.demo_idle_seconds is not None:
-            return self._settings.demo_idle_seconds
+        if self._settings.override_idle_seconds is not None:
+            return self._settings.override_idle_seconds
         return policy.scale_down_after_idle_seconds
 
     def tick(self) -> None:

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from domain.constraints import evaluate_all, evaluate_rule, resolve_field
-from adapters.http_out.demo_agent_client import InvokeResponse, ToolCall
+from adapters.http_out.agent_client import InvokeResponse, ToolCall
 from domain.manifest import ConstraintRule, ConstraintSource, Confidence
 
 

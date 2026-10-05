@@ -6,7 +6,7 @@ to land.
 ## Local setup
 
 Each Python service (`rosterd-kernel`, `rosterd-coordinator`,
-`rosterd-ingestion`, `rosterd-demo-agent`) is independently runnable:
+`rosterd-ingestion`) is independently runnable:
 
 ```bash
 cd rosterd-<service>

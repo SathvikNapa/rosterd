@@ -7,6 +7,7 @@ import type {
   ConfirmResponse,
   ManifestResponse,
   Provenance,
+  SuggestedTasksResponse,
 } from '../types';
 
 const service = 'ingestion';
@@ -64,6 +65,15 @@ export function getProvenance(manifestId: string, signal?: AbortSignal) {
     service,
     signal,
   });
+}
+
+/** A "try this" plain-language task per agent, derived from its own
+ * discovered wiring. Additive -- see domain/suggested_tasks.py. */
+export function getSuggestedTasks(manifestId: string, signal?: AbortSignal) {
+  return request<SuggestedTasksResponse>(
+    `${base()}/manifest/${encodeURIComponent(manifestId)}/suggested-tasks`,
+    { service, signal },
+  );
 }
 
 export function listManifests(signal?: AbortSignal) {

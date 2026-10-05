@@ -43,8 +43,9 @@ export function Monitor() {
 
       {latest.length === 0 && (
         <Banner tone="info">
-          No <code>agent_metrics</code> rows for <code>{config.siteId}</code> yet. Trigger a flash sale on{' '}
-          <a href="/federation">Federation</a> and the scaler starts reporting.
+          No <code>agent_metrics</code> rows for <code>{config.siteId}</code> yet. Dispatch some real load (
+          <a href="/ask">Ask</a>, or <code>POST /agents/{'{id}'}/simulate-load</code> against the kernel directly)
+          and the scaler starts reporting.
         </Banner>
       )}
 

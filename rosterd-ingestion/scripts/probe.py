@@ -4,14 +4,17 @@ Usage:
     .venv/bin/python scripts/probe.py <repo_url> [<repo_url> ...]
     .venv/bin/python scripts/probe.py --suite        # a set of well-known repos
 
-Tries `import` mode first and falls back to `static` when the repo's own
-dependencies are not installed here, which is the normal case for someone
-else's repo. Reports which mode produced the answer, so a result is never
-mistaken for something it is not.
+A single `discover()` call does the whole job: it tries `import` mode
+first and falls back to `static` on its own -- both when the repo's own
+dependencies aren't installed here (the normal case for someone else's
+repo) and when it fails for a reason no dependency install fixes (a
+required config.yaml, an API key), confirmed against a real one,
+bytedance/deer-flow. `result.mode` (not a loop variable here) says which
+one actually produced the answer, so a result is never mistaken for
+something it is not.
 """
 from __future__ import annotations
 
-import os
 import sys
 from pathlib import Path
 
@@ -33,19 +36,11 @@ SUITE = [
 
 def probe_one(url: str) -> dict:
     """Clone a repo and try to discover its wiring. Never raises."""
-    summary = {"url": url, "mode": None, "error": None, "result": None}
+    summary = {"url": url, "error": None, "result": None}
     settings = get_settings()
     try:
         with fetch_repo(url, settings) as fetched:
-            for mode in ("import", "static"):
-                os.environ["ROSTERD_DISCOVERY_MODE"] = mode
-                try:
-                    result = discovery.discover(fetched.path, get_settings())
-                    summary["mode"] = mode
-                    summary["result"] = result
-                    return summary
-                except IngestError as exc:
-                    summary["error"] = f"{type(exc).__name__}: {exc.message}"
+            summary["result"] = discovery.discover(fetched.path, settings)
     except IngestError as exc:
         summary["error"] = f"{type(exc).__name__}: {exc.message}"
     except Exception as exc:  # noqa: BLE001 - a probe must not crash the run
@@ -62,9 +57,7 @@ def render(summary: dict) -> None:
         print(f"  FAILED: {summary['error']}")
         return
 
-    print(f"  mode: {summary['mode']}   located via: {result.graph_attr}")
-    if summary["mode"] == "static" and summary["error"]:
-        print(f"  (import mode unavailable: {summary['error']})")
+    print(f"  mode: {result.mode}   located via: {result.graph_attr}")
 
     print(f"\n  agents ({len(result.agent_nodes)}):")
     for node_name in result.agent_nodes:

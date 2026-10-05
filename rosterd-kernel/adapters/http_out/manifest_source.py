@@ -23,7 +23,7 @@ it (not just reading the code):
    `{max_refund_usd, requires_prior_node, ...}` object, not the finalized
    brief's `list[ConstraintRule]` (field/op/value/source/confidence) that
    `manifest.py` implements. A real `/ingest` -> confirm -> poll round trip
-   against the bundled demo-agent fixture fails Pydantic validation on
+   against a repo whose constraints.yaml uses these legacy flat keys fails Pydantic validation on
    `constraints` for every agent. This is a cross-team contract gap, not
    something to silently paper over with a guessed field-path mapping here
    (see the kernel README's "Notes for the team") -- it surfaces as a

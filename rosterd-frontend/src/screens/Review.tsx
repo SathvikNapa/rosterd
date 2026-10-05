@@ -7,11 +7,12 @@
  */
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { AgentBubble } from '../components/AgentBubble';
+import { GraphPreview } from '../components/GraphPreview';
 import { Badge, Banner, Button, Empty } from '../components/ui';
 import { StaggerBody, StaggerTr } from '../components/motion';
 import { confirmManifest } from '../lib/api/ingestion';
 import { describeError } from '../lib/api/http';
-import { isDemo } from '../lib/config';
 import { confidenceTone, sourceBadge } from '../lib/format';
 import { allRules, applyRuleEdit, formatValue } from '../lib/rules';
 import { useLive } from '../lib/live/LiveProvider';
@@ -25,7 +26,7 @@ export function Review() {
   const session = useSession();
   const { tables } = useLive();
   const manifestId = session.draftManifestId ?? session.activeManifestId;
-  const { manifest, kernelEntries, loading, error } = useManifest(manifestId);
+  const { manifest, kernelEntries, suggestedTasks, loading, error } = useManifest(manifestId);
 
   /** Local edits, sent as the `agents` body of the confirm call. */
   const [agents, setAgents] = useState<AgentManifestEntry[]>([]);
@@ -108,6 +109,86 @@ export function Review() {
           <a href="/ingest">Ingest</a> and re-analyze.
         </Banner>
       )}
+
+      {/*
+       * The agentic repo schema -- what discovery actually found, laid out
+       * before the (editable) inferred-rules table below it. This is the
+       * trust-boundary moment the screen's own header comment describes:
+       * seeing the real shape (nodes, wiring, each agent's tools and access)
+       * is what "a human confirms" should mean, not just skimming a flat
+       * list of constraint key/value pairs with no structure behind them.
+       */}
+      <div className="card card--flush">
+        <div style={{ padding: '20px 24px 0' }} className="label">
+          Discovered agent schema
+        </div>
+        <div style={{ padding: '4px 24px 20px' }}>
+          <GraphPreview graph={manifest?.graph ?? null} />
+        </div>
+        <table className="table">
+          <thead>
+            <tr>
+              <th>Agent</th>
+              <th>Node</th>
+              <th>Tools</th>
+              <th>Access</th>
+              <th>Purpose</th>
+              <th>Try it</th>
+            </tr>
+          </thead>
+          <StaggerBody>
+            {agents.map((agent) => (
+              <StaggerTr key={agent.id}>
+                <td>
+                  <div className="row" style={{ gap: 10 }}>
+                    <AgentBubble name={agentDisplayName(tables.agents, agent.id)} tone="neutral" size={28} />
+                    <span style={{ fontWeight: 600 }}>{agentDisplayName(tables.agents, agent.id)}</span>
+                  </div>
+                </td>
+                <td className="mono" style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                  {agent.node}
+                </td>
+                <td className="mono" style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                  {agent.tools.length ? agent.tools.join(', ') : '—'}
+                </td>
+                <td>
+                  {agent.direct_assignable ? (
+                    <span style={{ color: 'var(--ok)', fontSize: 13 }}>Direct</span>
+                  ) : (
+                    <span
+                      style={{ color: 'var(--text-muted)', fontSize: 13 }}
+                      title="Enforced by the kernel at the /dispatch boundary"
+                    >
+                      Gated{agent.entry_only_via.length ? ` · via ${agent.entry_only_via.join(' or ')}` : ''}
+                    </span>
+                  )}
+                </td>
+                <td style={{ fontSize: 13, color: 'var(--text-body)' }}>{agent.purpose || '—'}</td>
+                <td style={{ fontSize: 12, color: 'var(--text-muted)', maxWidth: 240 }}>
+                  {(suggestedTasks[agent.id] ?? []).length ? (
+                    <ul style={{ margin: 0, paddingLeft: 16 }}>
+                      {(suggestedTasks[agent.id] ?? []).map((task) => (
+                        <li key={task} style={{ marginBottom: 2 }}>
+                          {task}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    '—'
+                  )}
+                </td>
+              </StaggerTr>
+            ))}
+            {agents.length === 0 && (
+              <tr>
+                <td colSpan={6}>
+                  <Empty>{loading ? 'Loading manifest…' : 'No agents discovered for this manifest.'}</Empty>
+                </td>
+              </tr>
+            )}
+          </StaggerBody>
+        </table>
+      </div>
 
       <div className="card card--flush">
         <table className="table">
@@ -201,14 +282,8 @@ export function Review() {
           </Button>
           <Button
             onClick={confirm}
-            disabled={busy || isDemo || confirmed || !manifest}
-            title={
-              isDemo
-                ? 'Demo mode: no ingestion service is being called.'
-                : confirmed
-                  ? 'This manifest is already confirmed.'
-                  : undefined
-            }
+            disabled={busy || confirmed || !manifest}
+            title={confirmed ? 'This manifest is already confirmed.' : undefined}
           >
             {busy ? 'Confirming…' : confirmed ? 'Already live' : 'Confirm and go live'}
           </Button>

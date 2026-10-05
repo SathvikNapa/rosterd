@@ -1,8 +1,10 @@
 /**
  * rosterd-coordinator (:8300). Read paths here are the documented FALLBACK
- * for when the live relay is unreachable — the Federation screen subscribes to
- * the `sites` and `events` tables instead. POST /events and POST /policy/push
- * are kernel-to-coordinator traffic and are deliberately not exposed here.
+ * for when the live relay is unreachable — lib/live/LiveProvider.tsx polls
+ * these instead, app-wide, covering only the `sites` and `events` tables
+ * (all the coordinator knows about over plain REST). POST /events and
+ * POST /policy/push are kernel-to-coordinator traffic and are deliberately
+ * not exposed here.
  */
 import { config } from '../config';
 import { request } from './http';

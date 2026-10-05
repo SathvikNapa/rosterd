@@ -1,13 +1,12 @@
-"""The constraint evaluator: generic field/op/value rules against a demo
-agent's InvokeResponse. One pure, unit-testable function per the design --
-`evaluate_rule(rule, response) -> Violation | None`.
+"""The constraint evaluator: generic field/op/value rules against a
+governed agent's InvokeResponse. One pure, unit-testable function per the
+design -- `evaluate_rule(rule, response) -> Violation | None`.
 
 `rule.field` is a dot/bracket path into the InvokeResponse, e.g.
 `"tool_calls[0].args.amount"` for a specific tool call, or
 `"tool_calls[*].args.amount"` to check every tool call the response made
-(the wildcard form is what the misdirection scenario needs: an
-out-of-policy refund could be any tool call in the list, not always the
-first).
+(the wildcard form matters because an out-of-policy call could be any
+tool call in the list, not always the first).
 """
 from __future__ import annotations
 
@@ -16,12 +15,12 @@ from typing import Any
 
 # NOTE: pragmatic hexagonal exception -- domain importing an adapter.
 # InvokeResponse is a pure wire-contract type (no I/O of its own), but it
-# lives in demo_agent_client.py alongside the concrete HTTP client class
-# it was defined next to before this restructuring. Splitting that file
-# into a contracts half and an adapter half is a real option, just not
-# one bundled into a move-things-not-redesign-them pass -- deferred like
-# the other three documented exceptions in this service.
-from adapters.http_out.demo_agent_client import InvokeResponse
+# lives in agent_client.py alongside the concrete HTTP client class it was
+# defined next to before this restructuring. Splitting that file into a
+# contracts half and an adapter half is a real option, just not one
+# bundled into a move-things-not-redesign-them pass -- deferred like the
+# other three documented exceptions in this service.
+from adapters.http_out.agent_client import InvokeResponse
 from domain.manifest import ConstraintRule
 from rosterd_contracts import Violation
 
@@ -86,7 +85,7 @@ def _format_value(value: Any) -> str:
     """ConstraintRule.value is typed `float | str | list`, so a manifest's
     integer `50` round-trips through pydantic as `50.0`. Render whole-number
     floats without the trailing `.0` so `Violation.rule`/`expected` read the
-    way a human (or Shruti's schema) actually wrote the bound."""
+    way a human (or an agent's own tool schema) actually wrote the bound."""
     if isinstance(value, float) and value.is_integer():
         return str(int(value))
     return str(value)

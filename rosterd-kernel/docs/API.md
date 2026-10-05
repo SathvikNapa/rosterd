@@ -58,7 +58,7 @@ curl -s -X POST localhost:8100/policy \
 # {"applied": true}
 ```
 
-## Simulate a flash sale (what the Federation dashboard's button calls)
+## Simulate load (for testing the autoscaler -- see `scripts/load_test.py`)
 
 ```bash
 curl -s -X POST localhost:8100/agents/fulfillment/simulate-load \

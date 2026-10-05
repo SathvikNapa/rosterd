@@ -6,13 +6,15 @@ Endpoints
     POST /ask/parse                       plain text in, a proposed task out
     GET  /manifest/{manifest_id}          re-fetch a manifest without re-ingesting
 
-Both are exactly the contract in the brief. The three below are additive
-conveniences for debugging and for the Contracts screen's "Verified" badge; they
-add no fields to the two contracted responses.
+Both are exactly the contract in the brief. The four below are additive
+conveniences for debugging, for the Contracts screen's "Verified" badge,
+and for a starting point on the Ask screen; they add no fields to the two
+contracted responses.
 
-    GET  /manifest/{manifest_id}/provenance   commit, hashes, version, warnings
-    GET  /manifests                           everything ingested so far
-    GET  /healthz                             liveness + effective settings
+    GET  /manifest/{manifest_id}/provenance        commit, hashes, version, warnings
+    GET  /manifest/{manifest_id}/suggested-tasks   a "try this" per agent, from its own wiring
+    GET  /manifests                                everything ingested so far
+    GET  /healthz                                  liveness + effective settings
 """
 from __future__ import annotations
 
@@ -35,6 +37,7 @@ from domain.ingestion import (
     ManifestResponse,
     ManifestStatus,
 )
+from domain.suggested_tasks import suggest_tasks
 from adapters.filesystem.store import ManifestStore, Provenance
 from application.service import ingest
 
@@ -160,6 +163,34 @@ def get_provenance(manifest_id: str) -> Provenance:
     `constraints_sha256` for its "Verified" badge.
     """
     return _store().get(manifest_id).provenance
+
+
+@app.get("/manifest/{manifest_id}/suggested-tasks")
+def get_suggested_tasks(manifest_id: str) -> dict:
+    """A "try this" starting point per agent, derived from its own
+    discovered wiring (purpose, tools, numeric constraints, whether it's
+    directly dispatchable) -- see domain/suggested_tasks.py. Computed on
+    demand from the stored manifest, not persisted, so it never needs a
+    schema migration and can't drift from what's actually in `agents`.
+
+    Additive, same as /provenance -- adds no fields to the two contracted
+    responses. An agent with nothing to go on (no tools, no purpose) gets
+    an empty list rather than a guessed scenario.
+    """
+    record = _store().get(manifest_id)
+    return {
+        "manifest_id": record.manifest_id,
+        "agents": {
+            agent.id: suggest_tasks(
+                purpose=agent.purpose,
+                tools=agent.tools,
+                direct_assignable=agent.direct_assignable,
+                entry_only_via=agent.entry_only_via,
+                constraints=agent.constraints,
+            )
+            for agent in record.agents
+        },
+    }
 
 
 @app.get("/manifests")

@@ -62,9 +62,9 @@ class TestIngestionPollScalingDefault:
     kernel: agent_metrics kept recording current_replicas=1,
     desired_replicas=1 no matter how much load /simulate-load pushed
     through it, because desired is clamped to max_replicas=1 regardless of
-    queue depth. That silently broke the autoscaling half of the demo
-    (Federation's flash-sale button, the Monitor screen) for any manifest
-    that came from a real ingest. IngestionPollManifestSource now applies
+    queue depth. That silently broke autoscaling (the Monitor screen never
+    showing a pool climb) for any manifest that came from a real ingest.
+    IngestionPollManifestSource now applies
     the kernel's own configured default scaling policy to every entry it
     fetches, standing in until ingestion can express a real per-agent one.
     """

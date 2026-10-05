@@ -8,12 +8,10 @@
  *  - `tasks` has no writer, so a task scheduled in this UI is held here and
  *    merged with any live `tasks` rows that do show up.
  *
- * Persisted to localStorage so a reload mid-demo doesn't lose the manifest.
+ * Persisted to localStorage so a reload mid-session doesn't lose the manifest.
  */
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
-import { isDemo } from './config';
-import { DEMO_DRAFT_MANIFEST_ID, DEMO_MANIFEST_ID, demoManifest, demoRunLinks } from './live/demo';
 import type { ManifestResponse, TaskRow } from './types';
 
 const STORAGE_KEY = 'rosterd.session.v1';
@@ -41,15 +39,6 @@ const EMPTY: PersistedSession = {
   runLinks: {},
 };
 
-const DEMO: PersistedSession = {
-  repoUrl: 'https://github.com/acme/orders-agents',
-  draftManifestId: DEMO_DRAFT_MANIFEST_ID,
-  confirmedManifestId: DEMO_MANIFEST_ID,
-  localTasks: [],
-  lastRunId: 'run-4482',
-  runLinks: demoRunLinks,
-};
-
 interface SessionValue extends PersistedSession {
   /** The manifest the live screens should read: confirmed if there is one. */
   activeManifestId: string | null;
@@ -70,7 +59,6 @@ interface SessionValue extends PersistedSession {
 const SessionContext = createContext<SessionValue | null>(null);
 
 function load(): PersistedSession {
-  if (isDemo) return DEMO;
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
     if (!raw) return EMPTY;
@@ -82,10 +70,9 @@ function load(): PersistedSession {
 
 export function SessionProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<PersistedSession>(load);
-  const [manifest, setManifest] = useState<ManifestResponse | null>(isDemo ? demoManifest : null);
+  const [manifest, setManifest] = useState<ManifestResponse | null>(null);
 
   useEffect(() => {
-    if (isDemo) return;
     try {
       window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
     } catch {

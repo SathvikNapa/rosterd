@@ -20,19 +20,10 @@ export const config = {
   jaegerBaseUrl: str(env.VITE_JAEGER_BASE_URL, 'http://localhost:16686'),
   /** The site this UI drives. The kernel in compose is `site-a`. */
   siteId: str(env.VITE_SITE_ID, 'site-a'),
-  /**
-   * 'live'  — talk to the real services (default).
-   * 'demo'  — no backend at all; render the fixtures from the Figma frames.
-   *           Useful for design review and for demoing the UI before
-   *           `docker compose up` has finished.
-   */
-  mode: str(env.VITE_ROSTERD_MODE, 'live') as 'live' | 'demo',
   /** Poll interval for the coordinator-REST fallback, milliseconds (used
    * only when the live WebSocket itself can't connect). */
   pollIntervalMs: Number(str(env.VITE_POLL_INTERVAL_MS, '2000')),
 };
-
-export const isDemo = config.mode === 'demo';
 
 /** Jaeger deep link for a trace id, or null when there is no trace. */
 export function traceUrl(traceId: string | null | undefined): string | null {

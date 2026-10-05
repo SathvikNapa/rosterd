@@ -16,81 +16,28 @@ import { Stagger, StaggerItem } from '../components/motion';
 import { Banner, Button, Label } from '../components/ui';
 import { ingest } from '../lib/api/ingestion';
 import { describeError } from '../lib/api/http';
-import { isDemo } from '../lib/config';
 import { HOVER_LIFT, SPRING } from '../lib/motion';
 import { useSession } from '../lib/session';
 import type { ManifestResponse } from '../lib/types';
 
 /**
  * The shape constraints_loader.py actually accepts: a `constraints` mapping
- * keyed by GRAPH NODE NAME. `direct_assignable` and `entry_only_via` are now
- * INFERRED when omitted here (rosterd-ingestion/manifest.py: defaults to
- * `not node.has_interrupt`, via a real AST scan for a call named `interrupt`
- * in the node's function body -- astscan.calls_interrupt -- and
+ * keyed by GRAPH NODE NAME. `direct_assignable` and `entry_only_via` are
+ * INFERRED when omitted here (rosterd-ingestion/domain/manifest.py: defaults
+ * to `not node.has_interrupt`, via a real AST scan for a call named
+ * `interrupt` in the node's function body -- astscan.calls_interrupt -- and
  * `entry_only_via` infers from conditional graph edges into a gated node).
- * That's new: it used to be a hard `direct_assignable: false` for any node
- * with no explicit YAML entry, which meant an empty `constraints: {}`
- * submitted through this screen made every agent unreachable and Ask had
- * nothing to propose against (confirmed live: reproduced the exact bug
- * report, "No agent in this manifest is directly assignable", this way).
+ * So an empty `constraints: {}` block is a genuinely valid starting point
+ * for ANY repo -- nothing here is pre-filled to one specific example
+ * anymore. Add a business-number cap (`max_qty`, `max_refund_usd`, ...)
+ * after analyzing once, keyed by whatever node names the discovery preview
+ * on the right actually shows for the repo you pointed this at.
  *
- * What's still NOT inferred: numeric caps (`max_qty`, `max_refund_usd`)
- * mirror real `Field(le=...)` limits on the tool schemas, but nothing reads
- * those schemas yet -- they still have to be typed here. So the minimal
- * correct YAML for a repo is just the business numbers, nothing else; this
- * default is rosterd-example's real ones, verified live against the running
- * service to produce the exact same contract as the old fully-spelled-out
- * version (order_intake/fulfillment assignable, refund_exception gated with
- * entry_only_via: [order_intake]) with none of direct_assignable,
- * entry_only_via, or purpose typed by hand.
+ * A constraint keyed by a node name the discovered graph doesn't have is a
+ * hard 422 (constraints_unknown_nodes), not a warning -- fail closed is the
+ * documented, correct behavior (README.md "Constraints file").
  */
-const ROSTERD_EXAMPLE_URL = 'https://github.com/SathvikNapa/rosterd-example';
-
-const ROSTERD_EXAMPLE_CONSTRAINTS_YAML = `# constraints.yaml — merged over what discovery infers from the code.
-# direct_assignable and entry_only_via are now inferred (interrupt() +
-# graph edges) when omitted -- only the business numbers below still need a
-# human. This is rosterd-example's real repo
-# (${ROSTERD_EXAMPLE_URL}).
-#
-# purpose: is here on every agent too, not just the two business numbers --
-# found live, this is not just cosmetic. Without it, ingestion falls back
-# to whatever docstring discovery can find, then to a title-cased node
-# name ("order_intake" -> "Order intake") as a last resort -- both can
-# accidentally carry (or lack) the keywords Ask's routing depends on. A
-# real bug this way: a node's own honest docstring ("no interrupt() gate,
-# no approval needed") legitimately contains the word "approval", which
-# was then enough to mis-route an unrelated fraud-review request to it.
-# The purposes below are deliberately short and on-topic for exactly that
-# reason.
-version: 1
-constraints:
-  order_intake:
-    purpose: Classifies an incoming order as standard, high-value, or fraud-flagged
-  fulfillment:
-    purpose: Reserves inventory for a standard/high-value order
-    max_qty: 50
-  refund_exception:
-    purpose: Issues refunds; calls interrupt() for fraud-flagged/high-value orders
-    max_refund_usd: 100
-  catalog:
-    purpose: Read-only stock lookup for a SKU
-  payment:
-    purpose: Charges payment for an order
-    max_charge_usd: 2000
-`;
-
-// Any OTHER repo — the node names above are rosterd-example's own, and a
-// constraint keyed by a node name that doesn't exist in the discovered
-// graph is a hard 422 (constraints_unknown_nodes), not a warning: fail
-// closed is the documented, correct behavior (README.md "Constraints
-// file"). Confirmed live: pointing this screen at a real public repo
-// (langchain-ai/react-agent, nodes call_model/tools) while still holding
-// the rosterd-example default produced exactly that error. direct_assignable
-// and entry_only_via are inferred automatically regardless of repo, so an
-// empty constraints block is a genuinely valid starting point — add
-// business-number caps here, keyed by whatever node names the discovery
-// preview on the right actually shows, once you see them.
-const GENERIC_CONSTRAINTS_YAML = `# constraints.yaml — merged over what discovery infers from the code.
+const DEFAULT_CONSTRAINTS_YAML = `# constraints.yaml — merged over what discovery infers from the code.
 # direct_assignable and entry_only_via are inferred automatically (interrupt()
 # calls + graph edges) -- nothing required here for that. Add a business-rule
 # cap after analyzing once you can see the discovered node names on the right,
@@ -102,33 +49,24 @@ version: 1
 constraints: {}
 `;
 
-function defaultConstraintsFor(repoUrl: string): string {
-  return repoUrl.trim() === ROSTERD_EXAMPLE_URL ? ROSTERD_EXAMPLE_CONSTRAINTS_YAML : GENERIC_CONSTRAINTS_YAML;
-}
-
 export function Ingest() {
   const navigate = useNavigate();
   const session = useSession();
 
-  // https://github.com/SathvikNapa/rosterd-example is a real, public mirror
-  // of rosterd-demo-agent -- a clean `git clone` away, unlike the acme
-  // placeholder this used to default to (which doesn't exist and made
-  // ingest fail with repo_fetch_failed on first load).
-  const [repoUrl, setRepoUrl] = useState(session.repoUrl || ROSTERD_EXAMPLE_URL);
-  const [constraintsYaml, setConstraintsYaml] = useState(defaultConstraintsFor(repoUrl));
+  const [repoUrl, setRepoUrl] = useState(session.repoUrl || '');
+  const [constraintsYaml, setConstraintsYaml] = useState(DEFAULT_CONSTRAINTS_YAML);
   // Which repo URL the navigator last hand-edited constraints.yaml FOR --
   // null means "not hand-edited since this repo URL was set". Scoped to the
   // URL, not a plain once-true-forever boolean: a boolean here meant a
-  // single edit made while looking at rosterd-example's default (even just
-  // to peek at it) permanently stopped the box from re-syncing to whatever
-  // DIFFERENT repo got typed in next -- confirmed live, pointing this
-  // screen at react-agent while rosterd-example's own node names
-  // (order_intake, fulfillment, ...) were still sitting in the box produced
-  // a hard 422 constraints_unknown_nodes before discovery's result could
-  // ever reach the Review screen, which reads as "no agents found" with no
-  // indication why. Comparing against the CURRENT repoUrl means switching
-  // repos always re-syncs to a sane default for whatever's now typed in,
-  // unless you've specifically edited the box for that exact URL.
+  // single edit (even just poking at the box out of curiosity) permanently
+  // stopped the box from re-syncing to whatever DIFFERENT repo got typed in
+  // next -- confirmed live, pointing this screen at react-agent while a
+  // previous repo's constraints (keyed by node names react-agent doesn't
+  // have) were still sitting in the box produced a hard 422
+  // constraints_unknown_nodes before discovery's result could ever reach
+  // the Review screen, which reads as "no agents found" with no indication
+  // why. Comparing against the CURRENT repoUrl means switching repos always
+  // re-syncs the box, unless you've specifically edited it for that exact URL.
   const [editedForUrl, setEditedForUrl] = useState<string | null>(null);
   const [showYaml, setShowYaml] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -190,10 +128,10 @@ export function Ingest() {
               // above. Checked against nextUrl directly (not against the
               // not-yet-updated `repoUrl` still in this closure).
               if (editedForUrl !== nextUrl) {
-                setConstraintsYaml(defaultConstraintsFor(nextUrl));
+                setConstraintsYaml(DEFAULT_CONSTRAINTS_YAML);
               }
             }}
-            placeholder="https://github.com/SathvikNapa/rosterd-example"
+            placeholder="https://github.com/you/your-agent-repo"
             spellCheck={false}
             whileFocus={{ borderColor: 'var(--accent)' }}
             transition={SPRING}
@@ -255,8 +193,7 @@ export function Ingest() {
             className="btn--lg"
             style={{ alignSelf: 'flex-start' }}
             onClick={analyze}
-            disabled={busy || !repoUrl.trim() || isDemo}
-            title={isDemo ? 'Demo mode: no ingestion service is being called.' : undefined}
+            disabled={busy || !repoUrl.trim()}
           >
             <AnimatePresence mode="wait" initial={false}>
               {busy ? (
@@ -292,7 +229,6 @@ export function Ingest() {
           </Button>
         </StaggerItem>
 
-        {isDemo && <Banner tone="info">Demo mode — the fixtures from the Figma frames are already loaded.</Banner>}
         {error && <Banner tone="danger">{error}</Banner>}
 
         <StaggerItem style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 8 }}>

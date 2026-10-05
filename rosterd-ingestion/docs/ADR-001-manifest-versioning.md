@@ -62,7 +62,7 @@ URL normalisation folds away trailing slashes, a `.git` suffix, and case, so `ht
 
 ## Consequences and things left undone
 
-Storage grows monotonically. Each ingest writes one JSON file, on the order of a few KB. At hackathon scale that is irrelevant; a real deployment wants a retention policy that keeps every manifest still referenced by a run and prunes the rest.
+Storage grows monotonically. Each ingest writes one JSON file, on the order of a few KB. At this scale that is irrelevant; a real deployment wants a retention policy that keeps every manifest still referenced by a run and prunes the rest.
 
 There is deliberately **no delete endpoint**. Deleting a manifest would break the `GET` that a pinned kernel depends on, which is the one guarantee this whole design exists to provide.
 

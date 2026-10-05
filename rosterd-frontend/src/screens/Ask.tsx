@@ -14,13 +14,13 @@ import { Badge, Banner, Button, Criterion, Label } from '../components/ui';
 import { parseAsk } from '../lib/api/ingestion';
 import { dispatch } from '../lib/api/kernel';
 import { ServiceError, describeError } from '../lib/api/http';
-import { config, isDemo } from '../lib/config';
-import { demoAsk } from '../lib/live/demo';
+import { config } from '../lib/config';
 import { priorityTone } from '../lib/format';
 import { useLive } from '../lib/live/LiveProvider';
 import { agentDisplayName } from '../lib/selectors';
 import { EASE_OUT } from '../lib/motion';
 import { useSession } from '../lib/session';
+import { useManifest } from '../lib/useManifest';
 import type { AskResponse, TaskRow, TaskSpec } from '../lib/types';
 
 const PLACEHOLDER = "Refund order #4482, it's a duplicate charge, escalate if it's over policy";
@@ -31,9 +31,9 @@ export function Ask() {
   const { tables, refresh } = useLive();
 
   const [text, setText] = useState('');
-  const [proposal, setProposal] = useState<AskResponse | null>(isDemo ? demoAsk : null);
-  const [title, setTitle] = useState(isDemo ? demoAsk.task.title : '');
-  const [criteria, setCriteria] = useState<string[]>(isDemo ? demoAsk.task.expectation_criteria : []);
+  const [proposal, setProposal] = useState<AskResponse | null>(null);
+  const [title, setTitle] = useState('');
+  const [criteria, setCriteria] = useState<string[]>([]);
   const [editing, setEditing] = useState(false);
   const [parsing, setParsing] = useState(false);
   const [dispatching, setDispatching] = useState(false);
@@ -41,6 +41,19 @@ export function Ask() {
   const [rejection, setRejection] = useState<string | null>(null);
 
   const manifestId = session.confirmedManifestId;
+  const { manifest, suggestedTasks } = useManifest(manifestId);
+
+  // Only direct_assignable agents' suggestions -- /ask/parse can't propose
+  // a gated one anyway (no_assignable_agent), so a suggestion that would
+  // just fail to parse isn't a useful shortcut here. Deduped and capped so
+  // a manifest with many agents doesn't turn this into a wall of chips.
+  const suggestions = Array.from(
+    new Set(
+      (manifest?.agents ?? [])
+        .filter((agent) => agent.direct_assignable)
+        .flatMap((agent) => suggestedTasks[agent.id] ?? []),
+    ),
+  ).slice(0, 6);
 
   const parse = async () => {
     if (!manifestId) return;
@@ -159,14 +172,8 @@ export function Ask() {
           <Button
             style={{ height: 44, padding: '0 22px', borderRadius: 11, flexShrink: 0 }}
             onClick={parse}
-            disabled={parsing || !manifestId || isDemo}
-            title={
-              !manifestId
-                ? 'Confirm a manifest on Review first.'
-                : isDemo
-                  ? 'Demo mode: no ingestion service is being called.'
-                  : undefined
-            }
+            disabled={parsing || !manifestId}
+            title={!manifestId ? 'Confirm a manifest on Review first.' : undefined}
           >
             {parsing ? 'Parsing…' : 'Parse →'}
           </Button>
@@ -177,6 +184,31 @@ export function Ask() {
             No confirmed manifest yet. Only a confirmed manifest can be asked against — run{' '}
             <a href="/ingest">Ingest</a>, then confirm on <a href="/review">Review</a>.
           </Banner>
+        )}
+
+        {manifestId && !proposal && suggestions.length > 0 && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <Label>Try one of these, from what was actually discovered</Label>
+            <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+              {suggestions.map((suggestion) => (
+                <button
+                  key={suggestion}
+                  type="button"
+                  className="linkish"
+                  style={{
+                    fontSize: 12.5,
+                    padding: '6px 12px',
+                    borderRadius: 999,
+                    border: '1px solid var(--border)',
+                    background: 'var(--surface)',
+                  }}
+                  onClick={() => setText(suggestion)}
+                >
+                  {suggestion}
+                </button>
+              ))}
+            </div>
+          </div>
         )}
         {error && <Banner tone="danger">{error}</Banner>}
         {rejection && (
@@ -250,7 +282,7 @@ export function Ask() {
               <Button className="btn--ghost" onClick={() => setEditing((open) => !open)}>
                 {editing ? 'Done editing' : 'Edit'}
               </Button>
-              <Button onClick={doIt} disabled={dispatching || isDemo}>
+              <Button onClick={doIt} disabled={dispatching}>
                 {dispatching ? 'Dispatching…' : 'Do it'}
               </Button>
               </div>

@@ -12,9 +12,11 @@
  * and the scale bar reveal via useInView the first time they're scrolled
  * into frame.
  *
- * The two "proof" cards are not illustrative copy — the replica curve and
- * the killed-run numbers are from a real run of this stack (a Black Friday
- * load test and a real over-cap payment dispatch), not invented stats.
+ * The two "proof" cards describe real, general kernel capabilities
+ * (budget-boundary enforcement, autoscaling under load) rather than a
+ * specific captured run against any one agent repo -- this page makes no
+ * claim about a specific agent's behavior, since any agent repo can be the
+ * one pointed at rosterd.
  */
 import { motion, useInView } from 'motion/react';
 import type { ReactNode } from 'react';
@@ -30,9 +32,8 @@ import './Landing.css';
 const MotionLink = motion(Link);
 const MotionAnchor = motion.a;
 
-/** The real confirmed-manifest topology (order_intake's two routes), not a
- * placeholder graph — matches rosterd-kernel/tests/test_app.py's
- * test_graph_endpoint exactly. */
+/** An illustrative topology (a classify-then-route shape, a common pattern
+ * discovery finds in practice) -- not tied to any specific agent repo. */
 const HERO_GRAPH: GraphSpec = {
   nodes: ['order_intake', 'fulfillment', 'refund_exception'],
   edges: [
@@ -180,36 +181,36 @@ export function Landing() {
           verified live
         </div>
         <h2 style={{ fontSize: 30, fontWeight: 700, color: 'var(--text-strong)', margin: '0 0 32px', letterSpacing: '-0.01em' }}>
-          Not a mockup. This is what the running stack just did.
+          Not a mockup. This is how the real kernel behaves.
         </h2>
         <div className="landing__proof-grid">
           <Reveal>
             <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 24, height: '100%' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-muted)', marginBottom: 10 }}>
-                <span>fulfillment · replicas under load</span>
-                <span>1 → 10</span>
+                <span>any agent pool · replicas under load</span>
+                <span>1 → N</span>
               </div>
               <ScaleBar />
               <p style={{ fontSize: 13, color: 'var(--text-body)', margin: '14px 0 0' }}>
-                Black Friday load test, four pools at once: order_intake, catalog, fulfillment, payment all climbed
-                to the same ceiling, simultaneously, on the real kernel.
+                Every pool scales independently under real traffic — the kernel's scaler reacts to actual queue
+                depth, not a dial someone turned by hand.
               </p>
             </div>
           </Reveal>
           <Reveal delay={0.06}>
             <div style={{ background: 'var(--surface)', border: '1px solid var(--danger-border)', borderRadius: 14, padding: 24, height: '100%' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-                <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-muted)' }}>payment · ORD-5002</span>
+                <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-muted)' }}>tool call · over cap</span>
                 <Badge tone="danger">killed</Badge>
               </div>
               <div style={{ fontFamily: 'var(--font-mono)', fontSize: 12.5, color: 'var(--text-body)', lineHeight: 1.6 }}>
-                violation: tool_calls[*].args.amount lte 2000
+                violation: tool_calls[*].args.amount lte &lt;your cap&gt;
                 <br />
-                actual: 5000.0
+                actual: over the line
               </div>
               <p style={{ fontSize: 13, color: 'var(--text-body)', margin: '14px 0 0' }}>
-                A real dispatch, a real over-cap request, caught at the tool-call boundary. The same enforcement
-                path as every other agent, extended to one that didn't exist an hour earlier.
+                Any tool call that breaks the confirmed contract dies at the moment it happens, with a trace to
+                prove it — whatever agent it came from.
               </p>
             </div>
           </Reveal>
@@ -228,17 +229,6 @@ export function Landing() {
           <MotionLink to="/ingest" className="btn btn--lg" whileHover={HOVER_LIFT} whileTap={TAP_PRESS} style={{ textDecoration: 'none' }}>
             Watch it enforce a violation
           </MotionLink>
-          <MotionAnchor
-            href="https://github.com/SathvikNapa/rosterd-example"
-            target="_blank"
-            rel="noreferrer"
-            className="btn btn--lg btn--ghost"
-            whileHover={HOVER_LIFT}
-            whileTap={TAP_PRESS}
-            style={{ textDecoration: 'none' }}
-          >
-            View the example repo
-          </MotionAnchor>
         </div>
       </div>
 

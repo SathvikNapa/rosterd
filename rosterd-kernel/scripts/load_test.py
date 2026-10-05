@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""Fire real, sustained, concurrent load at several agent pools at once --
-order_intake, catalog, fulfillment, and payment, not just one -- and print
-`agent_metrics` as it happens so the autoscaling response is watchable live.
+"""Fire real, sustained, concurrent load at several agent pools at once,
+not just one, and print `agent_metrics` as it happens so the autoscaling
+response is watchable live.
 
 Built after a real "why doesn't Monitor move" investigation turned up a
 genuine timing gotcha, not a scaling bug (see rosterd-kernel/README.md's
 "A load burst can finish faster than the scaler samples it"): the scaler
 only samples `working + queued` once per ROSTERD_KERNEL_SCALER_INTERVAL_SEC
-(default 5s), so a single small burst against a fast (AGENT_MODE=scripted)
-demo-agent can fully drain between two ticks and never show up at all.
+(default 5s), so a single small burst against a fast agent can fully drain
+between two ticks and never show up at all.
 
 The fix here is NOT a shortcut around that -- it's sustaining real,
 genuine load for longer than one tick interval, by repeatedly firing
@@ -22,22 +22,25 @@ NO throttle (`/simulate-load`'s own `rate_per_second=0` means "spawn all
 simulate.py). At 4 agents x up to ~16 overlapping rounds x 150 threads
 each, that's on the order of several thousand real OS threads spawned
 *inside the kernel process* over a few seconds, each holding a real HTTP
-connection open to demo-agent -- genuinely heavy for any machine, not
-just a slow one. Still verified live at the original settings (scaled
-all four to their ceiling simultaneously with real queue depth), but the
-defaults below are deliberately much gentler: a real --rate throttle is
-now threaded through to /simulate-load's own rate_per_second (spreading
-each burst's thread creation out instead of firing it all at once), and
-burst/round counts are both cut roughly 10x. Still enough overlapping
-load to visibly scale a few agents past 1 replica; turn the numbers back
-up with the flags below if your machine can take it and you want the
-full double-digit ceiling climb.
+connection open to the target agent -- genuinely heavy for any machine,
+not just a slow one. Still verified live at the original settings (scaled
+all four agents to their ceiling simultaneously with real queue depth),
+but the defaults below are deliberately much gentler: a real --rate
+throttle is now threaded through to /simulate-load's own rate_per_second
+(spreading each burst's thread creation out instead of firing it all at
+once), and burst/round counts are both cut roughly 10x. Still enough
+overlapping load to visibly scale a few agents past 1 replica; turn the
+numbers back up with the flags below if your machine can take it and you
+want the full double-digit ceiling climb.
 
 Usage:
-    .venv/bin/python scripts/black_friday_load.py
-    .venv/bin/python scripts/black_friday_load.py --kernel http://localhost:8100 \\
+    .venv/bin/python scripts/load_test.py --agents my_agent another_agent
+    .venv/bin/python scripts/load_test.py --kernel http://localhost:8100 \\
         --seconds 6 --burst 15 --interval 1.0 --rate 8 \\
-        --agents order_intake catalog fulfillment payment
+        --agents my_agent another_agent a_third_agent
+
+`--agents` is required -- pass the node names your own confirmed manifest
+actually has (see GET /manifest on the kernel, or the Roster screen).
 
 agent_metrics lives in Postgres, not a kernel endpoint, so by default
 this script just drives the load and leaves watching it to the caller
@@ -140,8 +143,9 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--kernel", default="http://localhost:8100")
     parser.add_argument(
-        "--agents", nargs="+", default=["order_intake", "catalog", "fulfillment", "payment"],
-        help="Black Friday's high-traffic agents. refund_exception is deliberately excluded by default.",
+        "--agents", nargs="+", required=True,
+        help="Node names from your confirmed manifest to load -- there's no built-in default "
+        "agent anymore, so this is required. See GET /manifest on the kernel, or Roster.",
     )
     parser.add_argument("--seconds", type=float, default=6.0, help="How long to sustain overlapping bursts.")
     parser.add_argument("--burst", type=int, default=15, help="Requests per agent per round.")
@@ -160,7 +164,7 @@ def main() -> int:
     args = parser.parse_args()
 
     print(
-        f"Black Friday load: {args.agents} for {args.seconds}s "
+        f"Load test: {args.agents} for {args.seconds}s "
         f"({args.burst}/round every {args.interval}s, throttled to {args.rate}/s per round)"
     )
 

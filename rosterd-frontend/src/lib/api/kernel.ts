@@ -1,4 +1,4 @@
-/** rosterd-kernel (:8100) — dispatch, runs, pools, simulate-load. */
+/** rosterd-kernel (:8100) — dispatch, runs, pools. */
 import { config } from '../config';
 import { request } from './http';
 import type {
@@ -7,7 +7,6 @@ import type {
   InstancesResponse,
   KernelManifestResponse,
   RunResponse,
-  SimulateLoadResponse,
 } from '../types';
 
 const service = 'kernel';
@@ -31,22 +30,6 @@ export function killRun(runId: string, signal?: AbortSignal) {
   return request<{ run_id: string; status: 'killed'; reason: string }>(
     `${base()}/runs/${encodeURIComponent(runId)}/kill`,
     { method: 'POST', service, signal },
-  );
-}
-
-/**
- * Federation's "Simulate flash sale" — deliberately this and not the manual
- * POST /agents/{id}/scale, so the scaler reacts to real load rather than the
- * UI setting a replica count by hand.
- */
-export function simulateLoad(
-  agentId: string,
-  body: { count?: number; rate_per_second?: number; scale_down_after_idle_seconds_override?: number },
-  signal?: AbortSignal,
-) {
-  return request<SimulateLoadResponse>(
-    `${base()}/agents/${encodeURIComponent(agentId)}/simulate-load`,
-    { method: 'POST', service, signal, body },
   );
 }
 

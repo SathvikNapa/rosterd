@@ -9,8 +9,6 @@ npm install
 npm run dev           # http://localhost:5173
 ```
 
-No backend running? `VITE_ROSTERD_MODE=demo npm run dev` renders every screen from the Figma fixtures.
-
 ## Screens
 
 | Route | Frame | Reads | Writes |
@@ -21,8 +19,13 @@ No backend running? `VITE_ROSTERD_MODE=demo npm run dev` renders every screen fr
 | `/roster` | 4. Schedule and Roster | `agents`, `tasks` | kernel `POST /dispatch` |
 | `/runs/:runId` | 5. Task Run and Violation | kernel `GET /runs/{id}`, `events` | kernel `POST /runs/{id}/kill` |
 | `/contracts` | 6. Contracts and Access | `GET /manifest/{id}`, kernel `GET /manifest` | - |
-| `/federation` | 7. Federation Dashboard | `sites`, `agents`, `events` | kernel `POST /agents/{id}/simulate-load` |
 | `/monitor` | *(no frame - see below)* | `agent_metrics` | - |
+
+The original design mockup's seventh frame (a Federation dashboard) was
+dropped along with this repo's other early-stage demo scaffolding
+(`rosterd-demo-agent`, demo-fixture mode); the kernel's own
+`POST /agents/{id}/simulate-load` endpoint it drove still exists --
+see `rosterd-kernel/scripts/load_test.py` for a CLI that calls it.
 
 Every write goes through a kernel or ingestion endpoint. The UI never writes to Postgres directly.
 
@@ -49,7 +52,6 @@ Copy `.env.example` to `.env.local`. Defaults match `docker-compose.yml` plus `r
 | `VITE_COORDINATOR_WS_URL` | `ws://localhost:8300/ws` | the live-relay WebSocket |
 | `VITE_JAEGER_BASE_URL` | `http://localhost:16686` | `View trace` links point here |
 | `VITE_SITE_ID` | `site-a` | the site this UI drives |
-| `VITE_ROSTERD_MODE` | `live` | `demo` renders the Figma fixtures |
 | `VITE_POLL_INTERVAL_MS` | `2000` | tier-2 poll interval |
 
 All three services already send `Access-Control-Allow-Origin: *`, so no proxy is needed in dev.
@@ -72,7 +74,7 @@ The frames were drawn against the finished product; some of it isn't built yet. 
 src/
   lib/
     api/          one module per service, typed against its Pydantic models
-    live/         ws.ts (WebSocket), rows.ts (row normalizers), LiveProvider.tsx, demo.ts
+    live/         ws.ts (WebSocket), rows.ts (row normalizers), LiveProvider.tsx
     types.ts      wire shapes, snake_case, mirrored from the services
     selectors.ts  pools, site rollups, the scaler formula readout
     rules.ts      manifest -> the rule rows Review and Contracts render

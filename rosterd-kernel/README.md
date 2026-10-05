@@ -1,12 +1,12 @@
 # rosterd - kernel service
 
-One kernel instance per site. Dispatches tasks to that site's demo-agent
-pool, enforces the confirmed manifest's constraints at every tool call,
-autoscales the pool under load, and exports the distributed trace and
-scaling metrics the rest of the team's screens are built on.
+One kernel instance per site. Dispatches tasks to that site's governed
+agent pool, enforces the confirmed manifest's constraints at every tool
+call, autoscales the pool under load, and exports the distributed trace
+and scaling metrics the rest of the team's screens are built on.
 
 ```
-frontend ──> kernel-service ──> demo-agent-service × pool (same site only)
+frontend ──> kernel-service ──> agent-service × pool (same site only)
                   │
                   ├──> coordinator-service (posts events, receives policy updates)
                   ├──> Postgres (writes agents + agent_metrics every tick; a trigger
@@ -25,7 +25,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 Nothing above needs Docker, Postgres, ingestion, or an OTel collector
 running - `ROSTERD_KERNEL_DOCKER_MODE=simulated` (the default) simulates
 the instance *pool* only (no real container is started or killed; every
-dispatch still runs for real against a real demo-agent process), Postgres
+dispatch still runs for real against a real governed-agent process), Postgres
 writes fall back to logging, and OTel setup no-ops if the SDK can't reach
 a collector. Point `GET /health`, `/manifest`, and `/dispatch` at it
 immediately.
@@ -41,7 +41,7 @@ POST /dispatch
   ├─ look up agent_id in the confirmed manifest       404 if unknown
   ├─ reject if not direct_assignable                  200, status: rejected
   ├─ pick an idle instance, spin one up, or queue      reject if still full after the wait
-  ├─ POST /invoke on the demo agent, hard timeout      kill on timeout
+  ├─ POST /invoke on the governed agent, hard timeout  kill on timeout
   ├─ check the budget (tool calls, elapsed time)       kill on breach
   ├─ evaluate_all(constraints, response)               kill on the first violation
   └─ done: idle the instance, else: kill it            either way, POST /events to the coordinator
@@ -56,24 +56,23 @@ and write an `agents` row only when the pool itself changed.
 **A load burst can finish faster than the scaler samples it.** The scaler
 only *sees* load at the instant of its own tick - `working + queued` read
 once per `ROSTERD_KERNEL_SCALER_INTERVAL_SEC`, not continuously. Against a
-fast agent (demo-agent in `AGENT_MODE=scripted`, no network call per
-request), a `/simulate-load` burst of even a few hundred requests can fully
-drain in well under a second - faster than the default 5s tick - so two
-consecutive samples can straddle the whole spike and show no scaling at
-all, even though real load genuinely happened in between. Confirmed live:
-firing `{"count": 300, "rate_per_second": 0}` at four agent pools at once
+fast, scripted agent (no network call per request), a `/simulate-load`
+burst of even a few hundred requests can fully drain in well under a
+second - faster than the default 5s tick - so two consecutive samples can
+straddle the whole spike and show no scaling at all, even though real load
+genuinely happened in between. Confirmed live: firing
+`{"count": 300, "rate_per_second": 0}` at four agent pools at once
 produced zero visible scaling at the default interval, but the exact same
 load, sustained for several seconds (repeated overlapping bursts) with
 `ROSTERD_KERNEL_SCALER_INTERVAL_SEC=1`, scaled all four to their
 `max_replicas` ceiling and showed real `in_flight`/`queued` counts in
-`agent_metrics` in the process. Two ways to get a reliably visible scaling
-demo: sustain the load for longer than one tick interval (several
-overlapping `/simulate-load` calls rather than one), or lower
-`ROSTERD_KERNEL_SCALER_INTERVAL_SEC` for the session. `AGENT_MODE=llm`
-sidesteps this differently - a real model call naturally takes long enough
-per request that a burst builds a visible backlog even at the default
-interval, which is what the original (fulfillment-only) flash-sale demo
-was implicitly relying on.
+`agent_metrics` in the process. Two ways to get reliably visible scaling:
+sustain the load for longer than one tick interval (several overlapping
+`/simulate-load` calls rather than one -- see `scripts/load_test.py`), or
+lower `ROSTERD_KERNEL_SCALER_INTERVAL_SEC` for the session. An agent that
+makes a real model call per request sidesteps this differently -- the
+call itself naturally takes long enough that a burst builds a visible
+backlog even at the default interval.
 
 ## Endpoints
 
@@ -82,12 +81,12 @@ was implicitly relying on.
 | `POST` | `/dispatch` | Accept or reject a task assignment, run it |
 | `GET` | `/runs/{run_id}` | Check a run's status (now includes `paused` - see below) |
 | `POST` | `/runs/{run_id}/kill` | Force-terminate a run |
-| `POST` | `/runs/{run_id}/resume` | Approve/deny a run paused at demo-agent's `interrupt()` - by a human, or by the reviewer agent (see "Verified against the real demo-agent") |
+| `POST` | `/runs/{run_id}/resume` | Approve/deny a run paused at the governed agent's `interrupt()` - by a human, or by the reviewer agent (see "Verified against a real governed agent") |
 | `POST` | `/policy` | Apply a policy update from the coordinator |
 | `GET` | `/health` | Status and remaining budget |
 | `GET` | `/agents/{agent_id}/instances` | Current pool size and per-instance status |
 | `POST` | `/agents/{agent_id}/scale` | Manual scale override (debug/emergency) |
-| `POST` | `/agents/{agent_id}/simulate-load` | Fire synthetic load - what "Simulate flash sale" calls |
+| `POST` | `/agents/{agent_id}/simulate-load` | Fire synthetic load for testing the autoscaler -- see `scripts/load_test.py` |
 | `GET` | `/manifest` | *(debug)* the manifest currently governing this site |
 | `GET` | `/policy` | *(debug)* current policy overrides |
 | `GET` | `/healthz` | *(debug)* liveness + effective settings |
@@ -111,16 +110,16 @@ discipline as `rosterd-ingestion`'s own `/healthz` / `/manifests`.
 | `ROSTERD_KERNEL_SIMULATED_AGENT_URL` | `http://localhost:9000` | simulated mode: every instance's real `/invoke` target |
 | `ROSTERD_KERNEL_DOCKER_NETWORK` | `rosterd-{site_id}` | real mode: this site's isolated network |
 | `ROSTERD_KERNEL_AGENT_IMAGES` | `{}` | real mode: JSON `{agent_id: image}` map |
-| `ROSTERD_KERNEL_DEFAULT_AGENT_IMAGE` | `rosterd/demo-agent:latest` | real mode: fallback image |
-| `ROSTERD_KERNEL_DEMO_AGENT_PORT` | `8000` | real mode: the port `/invoke` listens on in-container |
+| `ROSTERD_KERNEL_DEFAULT_AGENT_IMAGE` | `rosterd/agent:latest` | real mode: fallback image |
+| `ROSTERD_KERNEL_AGENT_PORT` | `8000` | real mode: the port `/invoke` listens on in-container |
 | `ROSTERD_KERNEL_DISPATCH_TIMEOUT_SEC` | `20` | Hard timeout on `/invoke` |
 | `ROSTERD_KERNEL_QUEUE_WAIT_SEC` | `5` | How long a dispatch at a full pool waits before rejecting |
 | `ROSTERD_KERNEL_MAX_TOOL_CALLS` | `20` | Budget: tool calls per run |
 | `ROSTERD_KERNEL_MAX_RUN_SECONDS` | `120` | Budget: wall-clock seconds per run |
 | `ROSTERD_KERNEL_SCALER_INTERVAL_SEC` | `5` | Scaler tick interval |
-| `ROSTERD_KERNEL_DEMO_IDLE_SECONDS` | - | Overrides every agent's `scale_down_after_idle_seconds` (demo cooldown, 15-30s) |
+| `ROSTERD_KERNEL_OVERRIDE_IDLE_SECONDS` | - | Overrides every agent's `scale_down_after_idle_seconds` (fast cooldown for watching scale-down live, 15-30s) |
 | `ROSTERD_KERNEL_COORDINATOR_URL` | `http://localhost:8300` | Where `POST /events` goes |
-| `ROSTERD_KERNEL_SPACETIMEDB_URL` / `_MODULE` / `_TOKEN` | - | Unset = log rows instead of writing them |
+| `ROSTERD_KERNEL_POSTGRES_DSN` | - | Unset = log rows instead of writing them |
 | `GROK_API_KEY` / `XAI_API_KEY` / `ANTHROPIC_API_KEY` | - | Reviewer agent's LLM provider, checked in that order. None set = reviewer disabled, paused runs wait for a human to call `POST /runs/{id}/resume` |
 | `ROSTERD_KERNEL_REVIEWER_ENABLED` | `true` | Set `false` to disable the reviewer agent even with a key present |
 | `ROSTERD_KERNEL_REVIEWER_INTERVAL_SEC` | `4` | How often the reviewer checks for newly paused runs |
@@ -151,7 +150,7 @@ README's "Architecture" section): `domain/` (pure logic + wire contracts
 | `application/simulate.py` | `POST /agents/{id}/simulate-load` |
 | `adapters/http_out/legacy_constraints.py` | Stopgap: adapts ingestion's real dict-shaped `constraints` into `ConstraintRule`s |
 | `adapters/http_out/manifest_source.py` | Where the manifest comes from - polls ingestion today, see "Notes for the team" |
-| `adapters/http_out/demo_agent_client.py`, `coordinator_client.py` | Clients for the demo-agent's `/invoke` and the coordinator's `/events` |
+| `adapters/http_out/agent_client.py`, `coordinator_client.py` | Clients for the governed agent's `/invoke` and the coordinator's `/events` |
 | `adapters/docker/docker_backend.py` | Simulated (default) and real (Docker SDK) instance-pool control |
 | `adapters/postgres/postgres.py` | The `StateWriter` implementations (logs, or upserts/inserts into the real `rosterd-postgres` schema) |
 | `adapters/llm/reviewer.py` | The second, autonomous reviewer agent deciding paused runs |
@@ -178,7 +177,7 @@ A few places where the brief left room for judgment, called out explicitly
   calling `/invoke` - a fresh top-level assignment is exactly what
   `direct_assignable: false` forbids. (Following `next_node` from another
   agent's own `InvokeResponse` is a LangGraph-internal routing concern for
-  the demo agent, not something that goes through this REST contract.)
+  the governed agent, not something that goes through this REST contract.)
 
 - **`agent_id` matches on `AgentManifestEntry.id`, not `.node`.** Param's
   own ingestion README flags that `id` (the short handle) can collide
@@ -199,8 +198,9 @@ A few places where the brief left room for judgment, called out explicitly
   have `status: draft|confirmed` and a confirm endpoint, both enforced --
   see below). The `constraints` gap is bridged today by
   `legacy_constraints.py`, a narrow, explicitly-labeled stopgap that
-  translates the one legacy key the bundled demo fixture uses; it's a
-  no-op the moment ingestion sends a list instead of a dict. `scaling`
+  translates a small set of known legacy keys (`max_refund_usd`,
+  `max_qty`, `max_charge_usd`); it's a no-op the moment ingestion sends a
+  list instead of a dict. `scaling`
   still has no ingestion-side source at all, so every agent runs on
   `ScalingPolicy()`'s defaults (`min=max=1, target=1, idle=30s`) until
   Param's manifest carries real scaling numbers per agent. Nothing
@@ -208,7 +208,7 @@ A few places where the brief left room for judgment, called out explicitly
   converge; `ManifestIndex` is the only thing dispatch/scaler/`GET
   /manifest` ever read.
 - **The confirm gate is real and enforced, not assumed.** Verified by
-  actually ingesting the bundled `demo-agent` fixture, confirming it, and
+  actually ingesting a real agent repo, confirming it, and
   polling both the draft and confirmed manifest IDs: a draft is correctly
   refused (`ManifestSubscription.poll_once()` checks `status` explicitly,
   see "Verified against the real ingestion service" below), and the
@@ -244,12 +244,11 @@ A few places where the brief left room for judgment, called out explicitly
   not sequentially through one blocking loop. `Dispatcher.dispatch()`
   blocks for the whole `/invoke` call, so firing requests one at a time
   would never build up concurrent in-flight load - and without concurrent
-  load, the scaler formula never has a reason to grow the pool, which
-  would make the flash-sale demo a no-op.
+  load, the scaler formula never has a reason to grow the pool at all.
 
 - **`AgentInstance` has no separate "went idle at" timestamp** (it's not
   in the brief's schema, only `started_at`), so the scaler approximates
-  idle duration from instance age. Fine for the demo's 15-30s cooldown; a
+  idle duration from instance age. Fine for a short 15-30s cooldown; a
   longer-lived deployment would want a real field for it.
 
 ## Verified against the real ingestion service
@@ -290,15 +289,20 @@ fixture. Two things that reading the code alone didn't catch:
    misdirection scenario, working end to end against ingestion's real
    output, not a hand-built test fixture.
 
-**Update once `rosterd-demo-agent` (Shruti's real service) landed:**
-`legacy_constraints.py`'s map targeted the ingestion fixture's tool arg
-(`amount_usd`) above because that's the only demo-agent that existed when
-this was verified. The real service names the same arg `amount`
-(`issue_refund(order_id: str, amount: float)`, per her spec) -- since a
-kernel is only ever pointed at one real demo-agent for a given site, never
-at ingestion's own discovery fixture, the map now targets
-`tool_calls[*].args.amount` instead. `tests/test_legacy_constraints.py` pins
-this explicitly so it can't silently drift back.
+**Historical note:** this repo originally had a reference governed-agent
+service (`rosterd-demo-agent`), this project's original reference
+implementation, and `legacy_constraints.py`'s map was updated once it landed:
+its map initially targeted the ingestion fixture's tool arg (`amount_usd`)
+above because that was the only agent that existed when this was first
+verified; the real service named the same arg `amount`
+(`issue_refund(order_id: str, amount: float)`) -- since a kernel is only
+ever pointed at one real agent for a given site, never at ingestion's own
+discovery fixture, the map was changed to target
+`tool_calls[*].args.amount` instead, which is what it still targets today
+even though that specific reference service has since been removed (see
+the note at the top of "Verified against the real demo-agent" below).
+`tests/test_legacy_constraints.py` pins this explicitly so it can't
+silently drift back.
 
 Also caught in the same pass: the brief names three custom spans
 (`dispatch`, `constraint_check`, `scale_decision`); `constraint_check` had
@@ -323,9 +327,20 @@ container round trip above is what a mocked test can't substitute for.
 
 ## Verified against the real demo-agent
 
-Ingested `rosterd-demo-agent` (Shruti's real service, not a fixture) via a
-live `/ingest` → confirm → poll round trip, started it for real, and
-dispatched real tasks through the kernel at it end to end.
+> **This section (and "Verified against the resume + reviewer agent"
+> below it) is a historical verification log, kept for the real bugs it
+> documents.** `rosterd-demo-agent` was this repo's original reference
+> governed-agent service; it has since been removed, along with the
+> other early-stage demo scaffolding (see the project's own history for
+> that cleanup). Nothing below describes a service that still exists in
+> this repo today -- it's left as-is, unedited, because the bugs it
+> found and the fixes it verified are real and still apply to kernel
+> behavior against WHATEVER agent a site is actually pointed at, not
+> just the one used to find them.
+
+Ingested `rosterd-demo-agent` (a real governed-agent service, not a
+fixture) via a live `/ingest` → confirm → poll round trip, started it for
+real, and dispatched real tasks through the kernel at it end to end.
 
 1. **`fulfillment`'s `max_qty` constraint was declared in the manifest and
    never enforced.** `constraints.yaml` sets `max_qty: 50` on `fulfillment`
@@ -432,8 +447,8 @@ tests (`tests/test_run_store.py`, `tests/test_app.py`'s
   so `IngestionPollManifestSource.fetch()` applies
   `ROSTERD_KERNEL_DEFAULT_{MIN,MAX}_REPLICAS`/`_TARGET_CONCURRENCY`
   uniformly to every agent from a real ingest - confirmed live, this is
-  what makes Federation's flash-sale button move the Monitor screen's pod
-  count at all; without it (the ScalingPolicy model's own bare default is
+  what makes the Monitor screen's pod count move at all under real load;
+  without it (the ScalingPolicy model's own bare default is
   `max_replicas: 1`), every real-ingested manifest was silently capped at
   exactly one replica per agent forever, no matter how much load hit it.
   One shared policy for every agent on a site is a real, current limit -

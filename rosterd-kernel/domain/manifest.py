@@ -49,8 +49,9 @@ class Confidence(str, Enum):
 
 
 class ConstraintRule(BaseModel):
-    """field is a dot/bracket path into a demo-agent InvokeResponse, e.g.
-    'tool_calls[*].args.amount' (evaluate_rule in constraints.py resolves it)."""
+    """field is a dot/bracket path into a governed agent's InvokeResponse,
+    e.g. 'tool_calls[*].args.amount' (evaluate_rule in constraints.py
+    resolves it)."""
 
     field: str
     op: Literal["lte", "gte", "eq", "in", "not_in"]

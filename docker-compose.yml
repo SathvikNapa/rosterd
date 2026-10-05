@@ -1,9 +1,12 @@
 # rosterd — local dev / demo compose.
 #
 # otel-collector + Jaeger, kernel-site-a, coordinator, and postgres are all
-# real, built/wired services. ingestion, the frontend, and the demo-agent
-# image are each their own build; the commented blocks below are where
-# they plug in, not a promise about their shape.
+# real, built/wired services. ingestion and the frontend are each their own
+# build; the commented blocks below are where they plug in, not a promise
+# about their shape. There's no built-in reference agent service in this
+# repo -- bring your own agent repo through rosterd-ingestion, then point
+# ROSTERD_KERNEL_SIMULATED_AGENT_URL (simulated mode) or a real image (real
+# mode) at it. See rosterd-kernel/README.md.
 #
 # Quick start:
 #   docker compose up --build
@@ -13,12 +16,13 @@
 #   psql postgresql://rosterd:rosterd@localhost:5432/rosterd -c "SELECT * FROM agents"
 #
 # The kernel defaults to ROSTERD_KERNEL_DOCKER_MODE=simulated here, same as
-# scripts/run.sh, so `docker compose up` works before the demo-agent image
-# exists and without mounting the host's Docker socket -- every dispatched
-# task still runs for real against a real demo-agent process, only the
-# container/instance-pool bookkeeping is simulated. Flip to `real` (and
-# uncomment the docker.sock mount + rosterd-site-a network) once that image
-# is built. See rosterd-kernel/README.md.
+# scripts/run.sh, so `docker compose up` works without mounting the host's
+# Docker socket and without any agent process running yet -- every
+# dispatch will fail until ROSTERD_KERNEL_SIMULATED_AGENT_URL actually
+# points at a running agent, but the rest of the stack (postgres, tracing,
+# the coordinator) comes up clean regardless. Flip to `real` (and
+# uncomment the docker.sock mount + rosterd-site-a network) once you have
+# a real agent image built.
 #
 # The coordinator already knows about kernel-site-a
 # (ROSTERD_COORDINATOR_SITE_KERNELS below) -- add a kernel-site-b service
@@ -96,7 +100,11 @@ services:
       ROSTERD_SITE_ID: site-a
       ROSTERD_KERNEL_OTEL_ENDPOINT: http://otel-collector:4318
       ROSTERD_KERNEL_DOCKER_MODE: simulated
-      ROSTERD_KERNEL_SIMULATED_AGENT_URL: http://demo-agent-site-a:8000
+      # No built-in reference agent in this repo -- point this at your own
+      # agent process's /invoke. Left unset here on purpose, so a dispatch
+      # fails loudly (connection refused) rather than silently targeting
+      # nothing real.
+      # ROSTERD_KERNEL_SIMULATED_AGENT_URL: http://your-agent-service:8000
       # ROSTERD_KERNEL_DOCKER_NETWORK: rosterd-site-a          # real mode only
       ROSTERD_KERNEL_INGESTION_URL: http://ingestion:8000
       ROSTERD_KERNEL_MANIFEST_ID: ${ROSTERD_MANIFEST_ID:-}     # set after POST /ingest
@@ -113,7 +121,7 @@ services:
       postgres:
         condition: service_healthy
     # Real Docker mode needs the host socket mounted so this container can
-    # start/kill its own sibling demo-agent containers:
+    # start/kill its own sibling agent containers:
     # volumes:
     #   - /var/run/docker.sock:/var/run/docker.sock
 
@@ -175,10 +183,16 @@ services:
   #   ports: ["8000:8000"]
   #   networks: [rosterd-backend]
 
-  # demo-agent-site-a:
+  # Your own agent repo's service -- discovered by ingestion, dispatched
+  # to by kernel-site-a. No built-in reference implementation ships in
+  # this repo; this slot is where your own Dockerfile plugs in once you
+  # have one. See ROSTERD_KERNEL_SIMULATED_AGENT_URL above (simulated
+  # mode) or ROSTERD_KERNEL_AGENT_IMAGES / _DEFAULT_AGENT_IMAGE (real
+  # mode) for how the kernel finds it.
+  # your-agent-site-a:
   #   build:
   #     context: .
-  #     dockerfile: rosterd-demo-agent/Dockerfile
+  #     dockerfile: path/to/your/agent/Dockerfile
   #   networks: [rosterd-site-a]     # only reachable by kernel-site-a
 
   # The UI. Served as static files by nginx; the browser talks to the

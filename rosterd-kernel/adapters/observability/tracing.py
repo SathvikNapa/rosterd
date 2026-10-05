@@ -151,7 +151,7 @@ class Telemetry:
 
     def inject_headers(self, headers: dict[str, str] | None = None) -> dict[str, str]:
         """Propagate `traceparent` on every outbound call, per the brief:
-        to the demo agent's /invoke and to the coordinator's /events."""
+        to the governed agent's /invoke and to the coordinator's /events."""
         headers = dict(headers or {})
         if self._enabled:
             propagate.inject(headers)

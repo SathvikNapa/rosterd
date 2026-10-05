@@ -155,40 +155,13 @@ function dotStyle(status: string): CSSProperties {
   return { ...base, background: 'transparent', border: '1.5px solid var(--accent-mid)' };
 }
 
-/** The thin load bar on each Federation site card. A spring, not a CSS
- * ease -- under a real flash-sale load test the value can change again
- * before the previous tween finishes, and a spring retargets smoothly
- * where a CSS transition restarts and visibly stutters. */
-export function LoadBar({ value, tone }: { value: number; tone: Tone }) {
-  const pct = Math.round(Math.max(0, Math.min(1, value)) * 100);
-  return (
-    <div
-      className="loadbar"
-      style={{ height: 6, borderRadius: 4, background: 'var(--border-soft)', overflow: 'hidden' }}
-      title={`Pool load ${pct}% of current capacity`}
-      role="img"
-      aria-label={`Pool load ${pct} percent of current capacity`}
-    >
-      <motion.div
-        style={{
-          height: '100%',
-          background: tone === 'warn' ? 'var(--warn)' : 'var(--accent-mid)',
-        }}
-        initial={false}
-        animate={{ width: `${pct}%` }}
-        transition={SPRING}
-      />
-    </div>
-  );
-}
-
 /**
  * `.btn`'s own hover/disabled color handling stays in CSS (className is
  * unchanged) -- this only adds the physical layer CSS can't: a lift toward
  * the cursor on hover, a real press on click, both interruptible mid-motion
  * because they're springs, not keyframed transitions. Every primary CTA in
- * the app (Analyze, Do it, Confirm, Schedule, Dispatch, Kill run, Simulate
- * flash sale) should be this, not a bare <button>.
+ * the app (Analyze, Do it, Confirm, Schedule, Dispatch, Kill run) should be
+ * this, not a bare <button>.
  */
 export function Button({
   className = '',

@@ -9,8 +9,17 @@ Two passes, deliberately:
   reaches for, which `get_graph()` does not expose, and can stand alone as the
   whole of discovery when running untrusted code is not acceptable.
 
-The two are merged: structure from runtime when available, tools from the union
-of both. Precedence and the reasoning behind it are in docs/DISCOVERY.md.
+The static pass always runs (its `RepoScan` feeds tool attribution either
+way), so when the runtime pass fails for a reason that isn't a missing
+Python dependency sandbox.py can install its way around -- a real public
+repo's own required runtime config, e.g. an API key or a config.yaml it
+refuses to start without, confirmed against a real one, bytedance/deer-flow
+-- `discover()` falls back to the static result already computed rather
+than failing outright. Lower fidelity (no dynamically built nodes, tools
+inferred from source instead of a real `get_graph()` call), but a usable
+manifest instead of nothing, with a warning saying exactly why it's the
+static result and not the runtime one. Precedence and the reasoning behind
+it are in docs/DISCOVERY.md.
 """
 from __future__ import annotations
 
@@ -27,9 +36,9 @@ from domain.errors import GraphLoadError, GraphNotFoundError
 
 # NOTE: pragmatic hexagonal exception -- ensure_installed() is a single
 # concrete function with no alternate implementation anywhere (same spirit
-# as rosterd-demo-agent's adapters/llm/brain.py / adapters/tooling/toolrun.py
-# exception), so this stays a direct adapter import rather than an invented
-# port.
+# as a governed agent's own LLM-brain or tool-invocation adapter -- no
+# formal interface, just one concrete implementation), so this stays a
+# direct adapter import rather than an invented port.
 from adapters.subprocess_sandbox import sandbox
 from config import Settings
 from rosterd_contracts import GraphEdge, GraphSpec
@@ -182,6 +191,19 @@ def _find_langgraph_json(repo: Path, *, max_depth: int = 3) -> Path | None:
     return None
 
 
+#: Receivers whose `.compile(...)` call is never a LangGraph builder --
+#: `re.compile(...)`/`regex.compile(...)` assigned to a module-level name
+#: (`PATTERN = re.compile(r"...")`) is an extremely common real-world
+#: pattern that matches the exact same "`X.compile(...)`, assigned to a
+#: top-level name" AST shape this tier looks for, found live scanning a
+#: real repo for this check's own false positives (the same class of bug
+#: `_lcel_assignments`' PEP 604 type-union rejection already fixed for the
+#: `|` tier -- see `_looks_like_a_type_expression`). This can't cover an
+#: aliased `import re as rx`, same honest limit the rest of this tier
+#: already has without importing anything.
+_NEVER_A_GRAPH_COMPILE_RECEIVERS = {"re", "regex"}
+
+
 def _compiled_assignments(path: Path) -> list[str]:
     """Top-level names in a file assigned from a `.compile(...)` call."""
     try:
@@ -193,8 +215,50 @@ def _compiled_assignments(path: Path) -> list[str]:
         if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call):
             func = node.value.func
             if isinstance(func, ast.Attribute) and func.attr == "compile":
+                receiver = func.value
+                if isinstance(receiver, ast.Name) and receiver.id in _NEVER_A_GRAPH_COMPILE_RECEIVERS:
+                    continue
                 names.extend(t.id for t in node.targets if isinstance(t, ast.Name))
     return names
+
+
+#: Builtin type names that show up on the `|` side of a PEP 604 type
+#: union (`X | None`, `str | SomeType`) but never as a real LCEL pipe
+#: operand -- see _looks_like_a_type_expression's docstring.
+_BUILTIN_TYPE_NAMES = {
+    "str", "int", "float", "bool", "bytes", "complex", "list", "dict",
+    "tuple", "set", "frozenset", "bytearray", "object", "type",
+}
+
+
+def _flatten_bitor_operands(node: ast.expr) -> list[ast.expr]:
+    """`a | b | c` parses as a left-associative BinOp(BinOp(a, b), c) --
+    flatten it to the three leaf operands so each one can be checked."""
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
+        return _flatten_bitor_operands(node.left) + _flatten_bitor_operands(node.right)
+    return [node]
+
+
+def _looks_like_a_type_expression(operand: ast.expr) -> bool:
+    """A real LCEL pipe operand is a Runnable -- a call (`ChatOpenAI()`,
+    `PromptTemplate.from_template(...)`) or a reference to one. A PEP 604
+    type union (`X | Y`, e.g. a type alias like
+    `LangChainToolResult = str | LangChainContentBlock | list[...]`) uses
+    the IDENTICAL `|` AST shape `_lcel_assignments` looks for -- there is
+    no way to tell them apart without importing, which this tier
+    deliberately never does (see its module docstring). These three
+    shapes are strong enough signals to reject on sight -- found live
+    against a real repo, mcp-use/mcp-use, whose langchain_adapter.py has
+    exactly that type alias at module level, which `locate_graph` matched
+    and returned FIRST, pre-empting any real graph the repo might
+    otherwise have: a subscripted generic (`list[X]`, `dict[str, int]`),
+    a bare reference to a builtin type name, or `None` -- none of these
+    are ever valid LCEL pipe operands."""
+    if isinstance(operand, ast.Subscript):
+        return True
+    if isinstance(operand, ast.Constant) and operand.value is None:
+        return True
+    return isinstance(operand, ast.Name) and operand.id in _BUILTIN_TYPE_NAMES
 
 
 def _lcel_assignments(path: Path) -> list[str]:
@@ -205,11 +269,13 @@ def _lcel_assignments(path: Path) -> list[str]:
     step), so `_compiled_assignments` alone misses every pure-LCEL repo
     that doesn't also happen to use one of the conventional names tier 4
     checks. `ast.BitOr` is `|`'s AST node regardless of what the operands
-    actually are -- this can't verify they're real Runnables without
-    importing them, same honest limit `_compiled_assignments` already has
-    for `.compile()` on an arbitrary object. `_run_worker`'s own
-    `hasattr(obj, "get_graph")` check is still what actually confirms it,
-    same as it already does for every other tier here.
+    actually are, so a PEP 604 type union (`X | None`) matches the exact
+    same shape -- `_looks_like_a_type_expression` rejects the clearest
+    cases of that on sight. What's left still can't be verified as a real
+    Runnable without importing it, same honest limit `_compiled_assignments`
+    already has for `.compile()` on an arbitrary object. `_run_worker`'s
+    own `hasattr(obj, "get_graph")` check is still what actually confirms
+    it, same as it already does for every other tier here.
     """
     try:
         tree = ast.parse(path.read_text(encoding="utf-8", errors="replace"))
@@ -218,17 +284,41 @@ def _lcel_assignments(path: Path) -> list[str]:
     names: list[str] = []
     for node in tree.body:
         if isinstance(node, ast.Assign) and isinstance(node.value, ast.BinOp) and isinstance(node.value.op, ast.BitOr):
+            operands = _flatten_bitor_operands(node.value)
+            if any(_looks_like_a_type_expression(operand) for operand in operands):
+                continue
             names.extend(t.id for t in node.targets if isinstance(t, ast.Name))
     return names
 
 
 def locate_graph(repo: Path, settings: Settings) -> GraphLocation:
-    """Find the compiled graph, cheapest and most explicit signal first."""
+    """The single best-guess location -- the first candidate
+    `locate_graph_candidates` finds. Prefer that function directly when a
+    failed import should try the next guess rather than give up; this
+    wrapper exists for callers (and tests) that only ever want one."""
+    return locate_graph_candidates(repo, settings)[0]
+
+
+def locate_graph_candidates(repo: Path, settings: Settings) -> list[GraphLocation]:
+    """Find the compiled graph, cheapest and most explicit signal first.
+
+    Tiers 1 (`ROSTERD_GRAPH_SPEC`) and 2 (`langgraph.json`) are explicit,
+    authoritative signals -- each returns AT MOST one candidate, and an
+    operator/repo that declared one explicitly gets exactly that one, not
+    a fallback search, if it fails to import. Tiers 3 and 4 are heuristic
+    guessing across the whole repo and commonly turn up more than one
+    match (a module-level constant that merely LOOKS like a graph --
+    `re.compile(...)`, a PEP 604 type union -- can sort before the real
+    one in file-scan order; see `_NEVER_A_GRAPH_COMPILE_RECEIVERS` /
+    `_looks_like_a_type_expression`), so every tier-3/4 match is returned,
+    in priority order, for `_discover_via_import` to try in turn rather
+    than committing to the first guess.
+    """
     # 1. Operator override.
     if settings.graph_spec_override:
         found = _parse_spec(settings.graph_spec_override, repo)
         if found:
-            return found
+            return [found]
         raise GraphNotFoundError(
             f"ROSTERD_GRAPH_SPEC={settings.graph_spec_override!r} does not resolve in this repo."
         )
@@ -246,7 +336,9 @@ def locate_graph(repo: Path, settings: Settings) -> GraphLocation:
         for name, spec in declared.items():
             found = _parse_spec(str(spec), project_root, how=f"{rel}:{name}")
             if found:
-                return found
+                return [found]
+
+    candidates: list[GraphLocation] = []
 
     # 3. A top-level `X = something.compile()` (LangGraph) or `X = a | b | c`
     # (plain LangChain LCEL -- never calls .compile() at all) in any module.
@@ -256,9 +348,13 @@ def locate_graph(repo: Path, settings: Settings) -> GraphLocation:
         if not path.is_file():
             continue
         for name in _compiled_assignments(path):
-            return GraphLocation(str(path), name, f"compile() assignment in {path.name}", project_root=path.parent)
+            candidates.append(
+                GraphLocation(str(path), name, f"compile() assignment in {path.name}", project_root=path.parent)
+            )
         for name in _lcel_assignments(path):
-            return GraphLocation(str(path), name, f"LCEL ('|') assignment in {path.name}", project_root=path.parent)
+            candidates.append(
+                GraphLocation(str(path), name, f"LCEL ('|') assignment in {path.name}", project_root=path.parent)
+            )
 
     # 4. A conventional name in a conventional file.
     for rel in _CANDIDATE_FILES:
@@ -278,7 +374,12 @@ def locate_graph(repo: Path, settings: Settings) -> GraphLocation:
         }
         for attr in _CANDIDATE_ATTRS:
             if attr in assigned:
-                return GraphLocation(str(path), attr, f"conventional name in {rel}", project_root=path.parent)
+                candidates.append(
+                    GraphLocation(str(path), attr, f"conventional name in {rel}", project_root=path.parent)
+                )
+
+    if candidates:
+        return candidates
 
     raise GraphNotFoundError(
         "No LangGraph graph or LangChain Runnable found. Add a langgraph.json, or set "
@@ -592,7 +693,73 @@ def discover(repo: Path, settings: Settings) -> DiscoveryResult:
     if settings.discovery_mode == "static":
         return _discover_static(repo, scan, warnings)
 
-    location = locate_graph(repo, settings)
+    try:
+        return _discover_via_import(repo, scan, settings, warnings)
+    except (GraphLoadError, GraphNotFoundError) as exc:
+        # The runtime pass is authoritative when it works, but a real
+        # public repo commonly can't be imported here at all for a reason
+        # no amount of sandboxed-install retrying fixes -- its own
+        # required runtime config (an API key, a config.yaml it refuses
+        # to start without), not a missing Python package. Rather than
+        # fail the whole ingest, fall back to the static result from the
+        # `scan` already computed above: lower fidelity, but a real, usable
+        # manifest instead of nothing. See the module docstring.
+        logger.info("import-mode discovery failed (%s); falling back to static AST scan", exc)
+        warnings.append(
+            f"Runtime import failed ({exc}) -- falling back to static source "
+            "analysis. Structure and tools are inferred from source, not a "
+            "compiled graph; dynamically constructed nodes will be missing."
+        )
+        try:
+            return _discover_static(repo, scan, warnings)
+        except GraphNotFoundError:
+            # Static found nothing either -- the import failure is the
+            # real, actionable error here (a genuine bug, a hang, a
+            # missing dependency with nothing to install), not "no
+            # add_node() calls found", which would otherwise mask it.
+            # Surface it alone, not chained onto the static failure.
+            raise exc from None
+
+
+def _discover_via_import(
+    repo: Path, scan: astscan.RepoScan, settings: Settings, warnings: list[str]
+) -> DiscoveryResult:
+    """The runtime pass: import the real graph in a subprocess and read its
+    structure back. Tries every candidate `locate_graph_candidates` found
+    (up to `settings.max_graph_candidates`), in priority order, moving on
+    to the next on ANY failure -- a heuristic tier-3/4 match that turns
+    out not to be a real graph (an import error, or "compiled but
+    contains no agent nodes") doesn't mean the repo has no graph, only
+    that this particular guess was wrong. Raises the LAST candidate's
+    error if every one tried fails -- discover() decides whether to fall
+    back to the static scan."""
+    candidates = locate_graph_candidates(repo, settings)
+    # At least the first candidate always gets a real attempt, regardless
+    # of a misconfigured (<=0) ROSTERD_MAX_GRAPH_CANDIDATES.
+    tried = candidates[: max(1, settings.max_graph_candidates)]
+    last_error: GraphLoadError | GraphNotFoundError | None = None
+    for index, location in enumerate(tried):
+        try:
+            return _discover_one_candidate(repo, location, scan, settings, warnings)
+        except (GraphLoadError, GraphNotFoundError) as exc:
+            last_error = exc
+            if index + 1 < len(tried):
+                logger.info("candidate %r (%s) failed (%s); trying the next match", location.attr, location.how, exc)
+                warnings.append(f"{location.how} did not resolve to a real graph ({exc}); tried the next match.")
+    assert last_error is not None  # locate_graph_candidates never returns an empty, non-raising list
+    raise last_error
+
+
+def _discover_one_candidate(
+    repo: Path,
+    location: GraphLocation,
+    scan: astscan.RepoScan,
+    settings: Settings,
+    warnings: list[str],
+) -> DiscoveryResult:
+    """Import exactly ONE located candidate and build the DiscoveryResult
+    from it. Split out of `_discover_via_import` so trying the next
+    candidate on failure is a plain loop there, not a nested try/except."""
     payload = _discover_import(repo, location, settings, warnings)
     conditions = _condition_map(scan)
 

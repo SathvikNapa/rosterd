@@ -12,14 +12,13 @@
  */
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { config, isDemo } from '../config';
+import { config } from '../config';
 import { getEvents, getSites } from '../api/coordinator';
 import type { EventRow, LiveTables, SiteRow } from '../types';
-import { demoTables } from './demo';
 import { EMPTY_TABLES } from './rows';
 import { connectLive } from './ws';
 
-export type LiveTransport = 'demo' | 'websocket' | 'coordinator-rest' | 'connecting' | 'disconnected';
+export type LiveTransport = 'websocket' | 'coordinator-rest' | 'connecting' | 'disconnected';
 
 interface LiveContextValue {
   tables: LiveTables;
@@ -32,8 +31,8 @@ interface LiveContextValue {
 const LiveContext = createContext<LiveContextValue | null>(null);
 
 export function LiveProvider({ children }: { children: ReactNode }) {
-  const [tables, setTables] = useState<LiveTables>(isDemo ? demoTables : EMPTY_TABLES);
-  const [transport, setTransport] = useState<LiveTransport>(isDemo ? 'demo' : 'connecting');
+  const [tables, setTables] = useState<LiveTables>(EMPTY_TABLES);
+  const [transport, setTransport] = useState<LiveTransport>('connecting');
   const [error, setError] = useState<string | null>(null);
   const [nonce, setNonce] = useState(0);
 
@@ -49,13 +48,11 @@ export function LiveProvider({ children }: { children: ReactNode }) {
    * connection down and rebuild it after every dispatch.
    */
   const refresh = useCallback(() => {
-    if (transportRef.current === 'websocket' || transportRef.current === 'demo') return;
+    if (transportRef.current === 'websocket') return;
     setNonce((value) => value + 1);
   }, []);
 
   useEffect(() => {
-    if (isDemo) return;
-
     let cancelled = false;
     let timer: number | undefined;
     let handle: { disconnect: () => void } | null = null;

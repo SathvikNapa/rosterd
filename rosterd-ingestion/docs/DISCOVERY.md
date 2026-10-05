@@ -14,14 +14,16 @@ Both run on every ingest in `import` mode and the results are merged. Setting `R
 
 What's actually being located is anything with a `get_graph()` method — and that's a **LangChain Core `Runnable` method**, not a LangGraph-specific one. Every LCEL chain (`prompt | llm | parser`, built with no LangGraph import at all) has one too, since `CompiledGraph` is itself just a `Runnable`. So a repo doesn't need LangGraph to be discoverable; it needs *something* that exposes `get_graph()`.
 
-In order, stopping at the first hit:
+In order:
 
 1. `ROSTERD_GRAPH_SPEC`, e.g. `src/graph.py:workflow` — the operator override.
 2. `langgraph.json`, the manifest the LangGraph CLI itself uses. Its `graphs` map points at `./agent.py:graph`. LangGraph-specific — a plain LangChain repo won't have one, so this tier is simply skipped for it.
 3. A top-level assignment in a conventional module (`agent.py`, `graph.py`, `main.py`, `app.py`, `workflow.py`, and `src/`/`app/` variants), then anywhere else in the repo, matching either `X = <something>.compile(...)` (LangGraph) or `X = a | b | c` (plain LangChain LCEL — a Runnable never calls `.compile()` at all).
 4. A conventional attribute name (`graph`, `app`, `workflow`, `agent`, `compiled_graph`, `chain`) assigned in a conventional module.
 
-Steps 2–4 read the file with `ast.parse`, so locating the graph never runs anything — including step 3's LCEL check, which recognizes the `|` operator syntactically and can't verify the operands are real Runnables without importing them. That verification is what step "now import it" actually does, the same way it already does for an arbitrary `.compile()` target.
+Steps 2–4 read the file with `ast.parse`, so locating the graph never runs anything — including step 3's LCEL/`.compile()` checks, which recognize the AST shape syntactically and can't verify the operands are real Runnables without importing them. That verification is what "now import it" actually does.
+
+**Tiers 1-2 stop at the first hit — tiers 3-4 don't.** An explicit `ROSTERD_GRAPH_SPEC` or `langgraph.json` entry is authoritative: if it fails to import, that's a real error about the repo's own stated entry point, not something to route around. Tiers 3-4 are heuristic guessing across the whole repo, and commonly turn up more than one match — a module-level constant that merely *looks* like a graph (`PATTERN = re.compile(...)`, a PEP 604 type alias like `Result = str | SomeType | list[SomeType]`) can sort before the real one in file-scan order, confirmed live against two real repos: `mcp-use/mcp-use` had a type-union alias match first, and a synthetic `re.compile(...)` constant would match the exact same `.compile()` AST shape the real tier is looking for. The clearest cases of both (a subscripted generic, a bare builtin type name, `None`, or a `re`/`regex` receiver) are rejected on sight; what's left is tried as a CANDIDATE, not committed to — `locate_graph_candidates()` returns every tier-3/4 match in order, and a failed import (or an import that succeeds but isn't actually a Runnable, which the rejections above can't always catch — see `_looks_like_a_type_expression`'s docstring for the honest limit) moves on to the next one, up to `ROSTERD_MAX_GRAPH_CANDIDATES` (default 5) before giving up on the import pass entirely.
 
 The loader also accepts an uncompiled `StateGraph` builder or a zero-argument factory that returns one, and compiles or calls it — a repo that exports `build_graph` rather than `graph` still works.
 
@@ -75,4 +77,4 @@ Static mode cannot see dynamically added nodes at all — it reports what `add_n
 
 Tool attribution is name-based. A tool reached through an alias, a registry lookup, or a variable that is never spelled out will be missed; declare it in `constraints.yaml`.
 
-The target repo's own dependencies must be importable by the service's interpreter. In `import` mode, install them into the same virtualenv, or the ingest fails with `graph_load_failed` naming the missing module.
+The target repo's own dependencies must be importable by the service's interpreter -- `sandbox.py`'s sandboxed install tries this automatically on what looks like a missing-dependency failure. When the runtime import fails for any other reason (a required `config.yaml`, an API key the repo won't start without -- confirmed against a real one, bytedance/deer-flow), `discover()` falls back to the static scan instead of failing the ingest outright, with a warning naming exactly what the import failure was. The ingest only fails with `graph_load_failed` when static finds nothing either (no `add_node(...)` calls anywhere) -- in that case the *import* failure is what's reported, not a generic "nothing found."

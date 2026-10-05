@@ -1,11 +1,11 @@
 # rosterd-contracts
 
 Shared wire-contract types used by every rosterd service: `rosterd-kernel`,
-`rosterd-coordinator`, `rosterd-ingestion`, `rosterd-demo-agent`.
+`rosterd-coordinator`, `rosterd-ingestion`.
 
 Until this package existed, these six types (`Priority`, `RunStatus`,
 `SiteStatus`, `Violation`, `GraphEdge`, `GraphSpec`) lived as a byte-for-byte
-duplicated `shared.py` in all four services — correct in principle (each
+duplicated `shared.py` in each service — correct in principle (each
 service stays independently deployable, no shared runtime dependency to
 version-lock across services) but wrong in practice: four copies that had to
 be kept in sync by hand, with no mechanism catching drift.

@@ -1,5 +1,5 @@
 """End-to-end HTTP contract tests against a real FastAPI app wired to a
-fake docker backend and a monkeypatched demo-agent HTTP call. No Docker
+fake docker backend and a monkeypatched governed-agent HTTP call. No Docker
 daemon, no live ingestion/coordinator/Postgres required.
 """
 from __future__ import annotations
@@ -26,7 +26,7 @@ def dispatch(client, agent_id="fulfillment", *, text="reserve some inventory", a
 
 
 def pending_approval(thread_id: str = "thread-1", reason: str = "needs a human") -> dict:
-    """Shaped exactly like demo-agent's main.py `_to_response` on a paused
+    """Shaped exactly like a governed agent's own `_to_response` on a paused
     run: `f"PENDING_HUMAN_APPROVAL [thread_id={thread_id}]: {reason}"`."""
     return {"output": f"PENDING_HUMAN_APPROVAL [thread_id={thread_id}]: {reason}", "tool_calls": [], "next_node": None}
 
@@ -52,7 +52,7 @@ class TestDispatchValidation:
     def test_not_directly_assignable_agent_is_rejected_not_errored(self, client):
         """This is the kernel's own boundary validation from the brief:
         POST /dispatch validates direct_assignable *before* ever calling
-        the demo agent -- refund/exception can only be reached indirectly."""
+        the governed agent -- refund/exception can only be reached indirectly."""
         response = dispatch(client, agent_id="refund")
         assert response.status_code == 200
         body = response.json()
@@ -61,8 +61,8 @@ class TestDispatchValidation:
 
 
 class TestDispatchHappyPath:
-    def test_successful_dispatch_is_accepted_and_the_run_completes(self, client, fake_demo_agent):
-        fake_demo_agent.set(
+    def test_successful_dispatch_is_accepted_and_the_run_completes(self, client, fake_agent):
+        fake_agent.set(
             lambda payload: FakeHttpxResponse(
                 200, {"output": "reserved", "tool_calls": [{"tool": "reserve_inventory", "args": {"qty": 3}}]}
             )
@@ -84,10 +84,10 @@ class TestDispatchHappyPath:
 
 
 class TestConstraintKill:
-    def test_out_of_policy_tool_call_kills_the_run(self, client, fake_demo_agent):
+    def test_out_of_policy_tool_call_kills_the_run(self, client, fake_agent):
         """The misdirection scenario: a fake 'manager override' tries to
         push qty past the schema-inferred cap of 50."""
-        fake_demo_agent.set(
+        fake_agent.set(
             lambda payload: FakeHttpxResponse(
                 200,
                 {
@@ -113,15 +113,15 @@ class TestConstraintKill:
 class TestSchemaRejectionSurfacesToOutput:
     """A tool call whose args fail the *tool's own* schema (e.g. a negative
     qty, once tools.py has a lower bound) is a different thing from a
-    manifest-rule violation: demo-agent's own toolrun.py already catches it
+    manifest-rule violation: the governed agent's own tool-invocation helper already catches it
     and records `"REJECTED by tool schema: ..."` in that call's `result` --
     but RunResponse never carried `tool_calls` at all, so nobody dispatching
     from the actual UI ever saw it. dispatch.py's `_with_rejection_notice`
     folds it into `output` instead, in the same plain-text-marker convention
     RunDetail.tsx already parses for prompt-injection lines."""
 
-    def test_a_schema_rejected_tool_call_adds_a_rejected_line_and_still_finishes_done(self, client, fake_demo_agent):
-        fake_demo_agent.set(
+    def test_a_schema_rejected_tool_call_adds_a_rejected_line_and_still_finishes_done(self, client, fake_agent):
+        fake_agent.set(
             lambda payload: FakeHttpxResponse(
                 200,
                 {
@@ -150,8 +150,8 @@ class TestSchemaRejectionSurfacesToOutput:
         # The original narrative line survives alongside the notice.
         assert "Fulfillment attempted to reserve -4 x SKU-DEMO." in run["output"]
 
-    def test_a_normal_response_with_no_rejected_tool_call_is_unchanged(self, client, fake_demo_agent):
-        fake_demo_agent.set(
+    def test_a_normal_response_with_no_rejected_tool_call_is_unchanged(self, client, fake_agent):
+        fake_agent.set(
             lambda payload: FakeHttpxResponse(
                 200, {"output": "reserved", "tool_calls": [{"tool": "reserve_inventory", "args": {"qty": 3}}]}
             )
@@ -168,11 +168,11 @@ class TestConstraintFollowsTheActualNode:
     within the SAME /invoke call used to check the ENTRY agent's
     constraints against the tool call -- order_intake's, which has no
     amount rule at all -- instead of the node that actually produced the
-    tool call. Reproduced 3/3 times against a real kernel + real demo-agent
-    + real LLM: a $180 refund (80% over the $100 cap) settled `done` with
+    tool call. Reproduced 3/3 times against a real kernel + a real governed
+    agent + real LLM: a $180 refund (80% over the $100 cap) settled `done` with
     `violation: null`. Root cause: `_settle` used the originally-dispatched
     agent's manifest entry unconditionally. Fixed by reading
-    `response.next_node` -- which demo-agent's own graph.py sets on the
+    `response.next_node` -- which the governed agent's own graph sets on the
     entry node and never clears on the way through a routed-to node, so it
     genuinely reports which node the response came from -- and checking
     THAT node's constraints when it names one in the manifest.
@@ -183,9 +183,9 @@ class TestConstraintFollowsTheActualNode:
     shape as the real bug, not a special-purpose fixture."""
 
     def test_a_direct_dispatch_that_routes_onward_is_checked_against_the_routed_nodes_contract(
-        self, client, fake_demo_agent
+        self, client, fake_agent
     ):
-        fake_demo_agent.set(
+        fake_agent.set(
             lambda payload: FakeHttpxResponse(
                 200,
                 {
@@ -202,16 +202,16 @@ class TestConstraintFollowsTheActualNode:
         assert run["violation"]["actual"] == "180"
 
     def test_a_resumed_run_that_routed_onward_is_also_checked_against_the_routed_nodes_contract(
-        self, client, fake_demo_agent
+        self, client, fake_agent
     ):
         """The exact scenario that reproduced live: paused at
         refund_exception's interrupt(), approved by the reviewer, resumed
         -- resume_run's own settle call must apply the same fix as a fresh
         dispatch, not just the direct path above."""
-        fake_demo_agent.set(lambda payload: FakeHttpxResponse(200, pending_approval()))
+        fake_agent.set(lambda payload: FakeHttpxResponse(200, pending_approval()))
         run_id = dispatch(client, agent_id="fulfillment").json()["run_id"]
 
-        fake_demo_agent.set(
+        fake_agent.set(
             lambda payload: FakeHttpxResponse(
                 200,
                 {
@@ -227,13 +227,13 @@ class TestConstraintFollowsTheActualNode:
         assert body["violation"]["rule"] == "tool_calls[*].args.amount lte 100"
 
     def test_a_next_node_outside_the_manifest_falls_back_to_the_dispatched_agents_own_contract(
-        self, client, fake_demo_agent
+        self, client, fake_agent
     ):
-        """next_node is demo-agent's own internal state, not something the
+        """next_node is the governed agent's own internal state, not something the
         kernel should trust blindly -- a value that isn't a real agent in
         the confirmed manifest must not crash or silently skip the check,
         it should fall back to exactly today's behavior."""
-        fake_demo_agent.set(
+        fake_agent.set(
             lambda payload: FakeHttpxResponse(
                 200,
                 {
@@ -250,14 +250,14 @@ class TestConstraintFollowsTheActualNode:
 
 
 class TestPauseAndResume:
-    """Previously a paused run (demo-agent's interrupt()) was silently
+    """Previously a paused run (the governed agent's interrupt()) was silently
     recorded as `done` -- indistinguishable from actually finishing, and
     with no way to ever unstick it. POST /runs/{id}/resume plus RunStatus.paused
     close that gap. See dispatch.py's module docstring and run_store.py's
     pause() for the fuller story."""
 
-    def test_a_pending_approval_response_pauses_the_run_not_finishes_it(self, client, fake_demo_agent):
-        fake_demo_agent.set(lambda payload: FakeHttpxResponse(200, pending_approval()))
+    def test_a_pending_approval_response_pauses_the_run_not_finishes_it(self, client, fake_agent):
+        fake_agent.set(lambda payload: FakeHttpxResponse(200, pending_approval()))
         response = dispatch(client)
         run_id = response.json()["run_id"]
 
@@ -270,11 +270,11 @@ class TestPauseAndResume:
         instances = client.get("/agents/fulfillment/instances").json()["instances"]
         assert instances[0]["status"] == "idle"
 
-    def test_resuming_approved_and_within_policy_finishes_done(self, client, fake_demo_agent):
-        fake_demo_agent.set(lambda payload: FakeHttpxResponse(200, pending_approval()))
+    def test_resuming_approved_and_within_policy_finishes_done(self, client, fake_agent):
+        fake_agent.set(lambda payload: FakeHttpxResponse(200, pending_approval()))
         run_id = dispatch(client).json()["run_id"]
 
-        fake_demo_agent.set(
+        fake_agent.set(
             lambda payload: FakeHttpxResponse(
                 200, {"output": "reserved", "tool_calls": [{"tool": "reserve_inventory", "args": {"qty": 3}}]}
             )
@@ -284,14 +284,14 @@ class TestPauseAndResume:
         assert resumed.json()["status"] == "done"
         assert resumed.json()["output"] == "reserved"
 
-    def test_resuming_approved_but_over_the_cap_still_gets_killed(self, client, fake_demo_agent):
+    def test_resuming_approved_but_over_the_cap_still_gets_killed(self, client, fake_agent):
         """The centerpiece guarantee: approval (from a human or the reviewer
-        agent) lifts demo-agent's own interrupt() gate, never the kernel's
+        agent) lifts the governed agent's own interrupt() gate, never the kernel's
         own constraint check. An over-cap tool call still dies."""
-        fake_demo_agent.set(lambda payload: FakeHttpxResponse(200, pending_approval()))
+        fake_agent.set(lambda payload: FakeHttpxResponse(200, pending_approval()))
         run_id = dispatch(client).json()["run_id"]
 
-        fake_demo_agent.set(
+        fake_agent.set(
             lambda payload: FakeHttpxResponse(
                 200,
                 {"output": "approved anyway", "tool_calls": [{"tool": "reserve_inventory", "args": {"qty": 999}}]},
@@ -303,14 +303,14 @@ class TestPauseAndResume:
         assert body["status"] == "killed"
         assert body["violation"]["rule"] == "tool_calls[*].args.qty lte 50"
 
-    def test_resuming_denied_finishes_done_with_no_tool_call(self, client, fake_demo_agent):
-        """Denial is demo-agent's own graph logic (refund_node.py: 'Refund
+    def test_resuming_denied_finishes_done_with_no_tool_call(self, client, fake_agent):
+        """Denial is the governed agent's own graph logic (e.g. a refund node: 'Refund
         denied by human reviewer.', no tool call) -- the kernel just settles
         whatever comes back, same as any other response with no tool_calls."""
-        fake_demo_agent.set(lambda payload: FakeHttpxResponse(200, pending_approval()))
+        fake_agent.set(lambda payload: FakeHttpxResponse(200, pending_approval()))
         run_id = dispatch(client).json()["run_id"]
 
-        fake_demo_agent.set(
+        fake_agent.set(
             lambda payload: FakeHttpxResponse(200, {"output": "denied by reviewer", "tool_calls": []})
         )
         resumed = client.post(f"/runs/{run_id}/resume", json={"approved": False, "reviewer": "reviewer-agent"})
@@ -318,8 +318,8 @@ class TestPauseAndResume:
         assert resumed.json()["status"] == "done"
         assert resumed.json()["output"] == "denied by reviewer"
 
-    def test_resuming_a_run_that_never_paused_is_rejected(self, client, fake_demo_agent):
-        fake_demo_agent.set(lambda payload: FakeHttpxResponse(200, {"output": "ok", "tool_calls": []}))
+    def test_resuming_a_run_that_never_paused_is_rejected(self, client, fake_agent):
+        fake_agent.set(lambda payload: FakeHttpxResponse(200, {"output": "ok", "tool_calls": []}))
         run_id = dispatch(client).json()["run_id"]  # finishes done immediately, never pauses
 
         resumed = client.post(f"/runs/{run_id}/resume", json={"approved": True})
@@ -333,11 +333,11 @@ class TestPauseAndResume:
 
 
 class TestTimeoutKill:
-    def test_a_hung_invoke_call_is_killed_as_a_timeout(self, client, fake_demo_agent):
+    def test_a_hung_invoke_call_is_killed_as_a_timeout(self, client, fake_agent):
         def hang(payload):
             raise httpx.TimeoutException("simulated hang")
 
-        fake_demo_agent.set(hang)
+        fake_agent.set(hang)
         response = dispatch(client)
         run = client.get(f"/runs/{response.json()['run_id']}").json()
         assert run["status"] == "killed"
@@ -345,9 +345,9 @@ class TestTimeoutKill:
 
 
 class TestBudgetKill:
-    def test_too_many_tool_calls_is_a_budget_violation(self, client, fake_demo_agent):
+    def test_too_many_tool_calls_is_a_budget_violation(self, client, fake_agent):
         many_calls = [{"tool": "reserve_inventory", "args": {"qty": 1}} for _ in range(50)]
-        fake_demo_agent.set(lambda payload: FakeHttpxResponse(200, {"output": "ok", "tool_calls": many_calls}))
+        fake_agent.set(lambda payload: FakeHttpxResponse(200, {"output": "ok", "tool_calls": many_calls}))
         response = dispatch(client)
         run = client.get(f"/runs/{response.json()['run_id']}").json()
         assert run["status"] == "killed"
@@ -355,12 +355,12 @@ class TestBudgetKill:
 
 
 class TestManualKill:
-    def test_killing_an_already_finished_run_still_marks_it_killed(self, client, fake_demo_agent):
+    def test_killing_an_already_finished_run_still_marks_it_killed(self, client, fake_agent):
         """Dispatch is synchronous, so by the time a human could call
         /kill the run has already finished -- force_kill's stickiness (see
         run_store.py) is what makes this still behave sanely instead of
         silently no-op'ing."""
-        fake_demo_agent.set(lambda payload: FakeHttpxResponse(200, {"output": "ok", "tool_calls": []}))
+        fake_agent.set(lambda payload: FakeHttpxResponse(200, {"output": "ok", "tool_calls": []}))
         run_id = dispatch(client).json()["run_id"]
         assert client.get(f"/runs/{run_id}").json()["status"] == "done"
 
@@ -380,9 +380,9 @@ class TestPolicy:
         assert response.json()["applied"] is True
         assert client.get("/policy").json()["tool_calls[*].args.qty lte"] == 10
 
-    def test_policy_push_tightens_the_effective_constraint(self, client, fake_demo_agent):
+    def test_policy_push_tightens_the_effective_constraint(self, client, fake_agent):
         client.post("/policy", json={"rule": "tool_calls[*].args.qty lte", "value": 10, "reason": "seen at 2 sites"})
-        fake_demo_agent.set(
+        fake_agent.set(
             lambda payload: FakeHttpxResponse(
                 200, {"output": "ok", "tool_calls": [{"tool": "reserve_inventory", "args": {"qty": 20}}]}
             )
@@ -403,8 +403,8 @@ class TestScaleAndSimulate:
         response = client.post("/agents/fulfillment/scale", json={"target_replicas": 0})
         assert response.json()["replicas"] == 0
 
-    def test_simulate_load_dispatches_concurrently_in_the_background(self, client, fake_demo_agent):
-        fake_demo_agent.set(lambda payload: FakeHttpxResponse(200, {"output": "ok", "tool_calls": []}))
+    def test_simulate_load_dispatches_concurrently_in_the_background(self, client, fake_agent):
+        fake_agent.set(lambda payload: FakeHttpxResponse(200, {"output": "ok", "tool_calls": []}))
         response = client.post(
             "/agents/fulfillment/simulate-load",
             json={"count": 3, "rate_per_second": 20},

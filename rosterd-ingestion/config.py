@@ -55,8 +55,18 @@ class Settings:
     #: Hard ceiling on `git clone`, in seconds.
     clone_timeout_sec: int = field(default_factory=lambda: _env_int("ROSTERD_CLONE_TIMEOUT_SEC", 60))
 
-    #: Reject a clone whose working tree exceeds this size.
-    max_repo_mb: int = field(default_factory=lambda: _env_int("ROSTERD_MAX_REPO_MB", 100))
+    #: Reject a clone whose working tree exceeds this size. 100 (the
+    #: original default) turned out too strict against a real repo:
+    #: bytedance/deer-flow, a legitimate Python/LangGraph backend bundled
+    #: in a monorepo alongside an unrelated web frontend, docs, and test
+    #: fixtures, shallow-clones to ~118MB even though the actual
+    #: LangGraph-relevant Python source (backend/app + backend/packages)
+    #: is a fraction of that -- a completely normal real-world layout, not
+    #: an abuse case. This check runs AFTER the clone already completed
+    #: (it bounds what discovery scans/imports next, not the clone's own
+    #: network/disk cost), so raising it doesn't weaken what it actually
+    #: guards against -- a comfortably larger but still bounded ceiling.
+    max_repo_mb: int = field(default_factory=lambda: _env_int("ROSTERD_MAX_REPO_MB", 300))
 
     #: Wall-clock ceiling on importing + introspecting the graph.
     import_timeout_sec: int = field(default_factory=lambda: _env_int("ROSTERD_IMPORT_TIMEOUT_SEC", 60))
@@ -95,6 +105,20 @@ class Settings:
     #: and does not match the conventional layouts.
     graph_spec_override: str | None = field(
         default_factory=lambda: os.environ.get("ROSTERD_GRAPH_SPEC") or None
+    )
+
+    #: Tier 3/4 (compile()/LCEL/conventional-name) scanning is heuristic
+    #: guessing across the whole repo and can turn up more than one match
+    #: -- a module-level constant that merely LOOKS like a graph (found
+    #: live: `re.compile(...)`, a PEP 604 type union) can precede the real
+    #: one in file-scan order. Rather than commit to the first guess,
+    #: discover() tries up to this many before falling back to the static
+    #: scan. Tiers 1-2 (an explicit ROSTERD_GRAPH_SPEC or langgraph.json
+    #: entry) are authoritative and never produce more than one candidate
+    #: regardless of this setting -- an explicit declaration that fails is
+    #: a real error to report, not something to route around by guessing.
+    max_graph_candidates: int = field(
+        default_factory=lambda: _env_int("ROSTERD_MAX_GRAPH_CANDIDATES", 5)
     )
 
     @property

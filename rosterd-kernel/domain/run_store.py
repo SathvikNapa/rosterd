@@ -26,7 +26,7 @@ class _RunMeta:
     agent_id: str
     current_instance_id: str | None = None
     kill_requested: bool = False
-    #: Set on pause() -- the LangGraph checkpoint id demo-agent's /resume
+    #: Set on pause() -- the LangGraph checkpoint id the governed agent's /resume
     #: needs to continue this exact run. None for any run that never paused.
     thread_id: str | None = None
     #: The task text as dispatched, kept so a reviewer (human or agent)
@@ -34,7 +34,7 @@ class _RunMeta:
     #: dispatch did -- the wire-contract RunResponse itself carries no task
     #: fields (see this module's docstring), so this is the only copy.
     task_text: str = ""
-    #: Set on pause() -- demo-agent's own interrupt() reason, e.g. "refund
+    #: Set on pause() -- the governed agent's own interrupt() reason, e.g. "refund
     #: on flagged/high-value order needs human approval". Surfaced to
     #: whoever (human or reviewer agent) is about to decide.
     pause_reason: str = ""

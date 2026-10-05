@@ -10,16 +10,17 @@ it? That's the problem this exists to answer.
 
 ## How it fits together
 
-Five independently-deployable services plus a shared Postgres schema for
-live cross-service state:
+Four independently-deployable services plus a shared Postgres schema for
+live cross-service state. There's no built-in reference agent service in
+this repo - rosterd governs whatever agent repo you point `rosterd-ingestion`
+at.
 
 | Service | What it does | Docs |
 |---|---|---|
 | [`rosterd-ingestion`](rosterd-ingestion/) | Clones a real agent repo, statically discovers its graph + tool schemas, merges in human-reviewed business limits, and produces a confirmed manifest - the contract everything else enforces. | [README](rosterd-ingestion/README.md) |
 | [`rosterd-kernel`](rosterd-kernel/) | One per site. Dispatches tasks to the governed agent, checks every tool call against the confirmed manifest, kills on a breach, autoscales per agent under load. | [README](rosterd-kernel/README.md) |
 | [`rosterd-coordinator`](rosterd-coordinator/) | Watches every site's kernel for a shared violation pattern and pushes a tightened policy to every *other* site automatically - the cross-site half of enforcement - and relays live Postgres updates to the frontend over a WebSocket. | [README](rosterd-coordinator/README.md) |
-| [`rosterd-demo-agent`](rosterd-demo-agent/) | A real 5-node LangGraph agent (order intake, fulfillment, refund exception, catalog, payment) used as the reference governed agent - reasons with a real LLM, not a mock. | [README](rosterd-demo-agent/README.md) |
-| [`rosterd-frontend`](rosterd-frontend/) | React + Vite UI across the whole flow: ingest → review → ask → schedule → run detail → federation → monitor. | [README](rosterd-frontend/README.md) |
+| [`rosterd-frontend`](rosterd-frontend/) | React + Vite UI across the whole flow: ingest → review → ask → schedule → run detail → monitor. | [README](rosterd-frontend/README.md) |
 | [`rosterd-postgres`](rosterd-postgres/) | The shared schema every service's dashboard reads from in real time - agents, metrics, sites, events, tasks, manifests - with a trigger that NOTIFYs on every write. | [README](rosterd-postgres/README.md) |
 
 Each service also builds and tests standalone - nothing here requires the

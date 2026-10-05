@@ -2,8 +2,9 @@
 shaped `constraints` into the finalized brief's `list[ConstraintRule]`.
 
 Written after a live ingest -> confirm -> kernel-poll round trip against
-the bundled demo-agent fixture failed Pydantic validation outright -- see
-manifest_source.py and manifest.py's module docstrings for the full story.
+a real agent repo whose constraints.yaml used these legacy flat keys
+failed Pydantic validation outright -- see manifest_source.py and
+manifest.py's module docstrings for the full story.
 """
 from __future__ import annotations
 
@@ -46,27 +47,28 @@ class TestAdaptLegacyConstraints:
         assert rule.value == 50
         assert rule.confidence == "low"
 
-    def test_map_targets_rosterd_demo_agents_arg_name_not_the_ingestion_fixtures(self):
-        """rosterd-demo-agent (Shruti's real service) names the refund tool's
-        arg `amount`; rosterd-ingestion/demo-agent/tools.py's bundled
-        discovery fixture names it `amount_usd`. Only the former is ever the
-        service a real kernel is configured against, so the default map
-        targets it -- this pins that choice so a future edit back to
-        `amount_usd` (e.g. someone "fixing" this to match the fixture) fails
-        loudly instead of silently breaking the misdirection demo."""
+    def test_map_targets_the_real_agents_arg_name_not_a_test_fixture(self):
+        """A real governed agent's refund tool named its arg `amount`;
+        rosterd-ingestion's own bundled discovery fixture (used by
+        ingestion's own tests, never by a real kernel) names it
+        `amount_usd`. Only the former is ever the shape a real kernel is
+        configured against, so the default map targets it -- this pins that
+        choice so a future edit back to `amount_usd` (e.g. someone "fixing"
+        this to match the fixture) fails loudly instead of silently
+        breaking real enforcement."""
         rule = DEFAULT_LEGACY_CONSTRAINT_MAP["max_refund_usd"]
         assert rule.field == "tool_calls[*].args.amount"
 
     def test_max_qty_becomes_a_constraint_rule_dict(self):
-        """rosterd-demo-agent's constraints.yaml declares `max_qty: 50` on
-        `fulfillment` (mirrors tools.ReserveInventoryArgs.qty = Field(le=50)).
-        Found unmapped by a live dispatch: a 200-unit reserve request through
-        the real kernel + rosterd-demo-agent came back `status: done,
+        """A real agent repo's constraints.yaml declared `max_qty: 50` on a
+        fulfillment-style node (mirroring a tool's own `qty = Field(le=50)`).
+        Found unmapped by a live dispatch: a 200-unit reserve request
+        through the real kernel + that agent came back `status: done,
         violation: null` -- the manifest carried the constraint, nothing
-        enforced it. Unlike max_refund_usd (gated behind refund_exception's
-        interrupt(), unreachable without a /resume the kernel doesn't have),
-        fulfillment has no interrupt gate, so this is the constraint a live
-        demo can actually trigger end to end."""
+        enforced it. Unlike max_refund_usd (gated behind an interrupt(),
+        unreachable without a /resume the kernel doesn't have), a
+        fulfillment-style node has no interrupt gate, so this is a
+        constraint a live dispatch can actually trigger end to end."""
         rules = adapt_legacy_constraints({"max_qty": 50})
         assert rules == [
             {"field": "tool_calls[*].args.qty", "op": "lte", "value": 50, "source": "default", "confidence": "low"}
@@ -113,10 +115,10 @@ class TestAgentManifestEntryValidator:
         assert entry.constraints[0].source == "schema"
         assert entry.constraints[0].confidence == "high"
 
-    def test_default_map_recognizes_exactly_the_keys_rosterd_demo_agent_declares(self):
-        """rosterd-demo-agent/constraints.yaml declares three legacy-shaped
-        constraint keys (max_refund_usd on refund_exception, max_qty on
-        fulfillment, max_charge_usd on payment) -- each needs a field
-        mapping or the kernel silently stops enforcing it, as max_qty did
-        until this was added."""
+    def test_default_map_recognizes_exactly_the_keys_a_real_agent_declared(self):
+        """A real agent repo's constraints.yaml declared three legacy-shaped
+        constraint keys (max_refund_usd on a refund-style node, max_qty on
+        a fulfillment-style node, max_charge_usd on a payment-style node)
+        -- each needs a field mapping or the kernel silently stops
+        enforcing it, as max_qty did until this was added."""
         assert set(DEFAULT_LEGACY_CONSTRAINT_MAP) == {"max_refund_usd", "max_qty", "max_charge_usd"}

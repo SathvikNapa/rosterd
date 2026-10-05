@@ -2,7 +2,6 @@ import { Navigate, Route, Routes } from 'react-router-dom';
 import { AppShell } from './components/AppShell';
 import { Ask } from './screens/Ask';
 import { Contracts } from './screens/Contracts';
-import { Federation } from './screens/Federation';
 import { Ingest } from './screens/Ingest';
 import { Landing } from './screens/Landing';
 import { Monitor } from './screens/Monitor';
@@ -24,7 +23,6 @@ export function App() {
         {/* Screen 5 is a detail view, reached from Ask, Roster, or an event. */}
         <Route path="/runs/:runId" element={<RunDetail />} />
         <Route path="/contracts" element={<Contracts />} />
-        <Route path="/federation" element={<Federation />} />
         <Route path="/monitor" element={<Monitor />} />
         <Route path="*" element={<Navigate to="/ingest" replace />} />
       </Route>

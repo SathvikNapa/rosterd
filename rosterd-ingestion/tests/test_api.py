@@ -179,6 +179,39 @@ class TestProvenance:
         assert any("direct_assignable not set in constraints.yaml" in w for w in provenance["warnings"])
 
 
+class TestSuggestedTasks:
+    """GET /manifest/{id}/suggested-tasks -- additive, same discipline as
+    /provenance: adds no fields to the two contracted responses (see the
+    test in TestIngest pinning AgentManifestEntry's exact field set)."""
+
+    def test_one_list_per_agent_derived_from_its_own_wiring(self, client, demo):
+        url, path = demo
+        created = ingest(client, url, (path / "constraints.yaml").read_text()).json()
+        body = client.get(f"/manifest/{created['manifest_id']}/suggested-tasks").json()
+
+        assert body["manifest_id"] == created["manifest_id"]
+        assert set(body["agents"]) == {"triage", "refund", "escalation"}
+
+        # refund_node: issue_refund + max_refund_usd=100 -- an in-policy and
+        # an over-cap example, both naming the real configured cap.
+        assert body["agents"]["refund"] == [
+            "Refund $50 on order ORD-DEMO.",
+            "Refund $150 on order ORD-DEMO -- over the $100 cap, to see it caught.",
+        ]
+
+    def test_a_gated_agents_suggestions_name_its_real_entry_path(self, client, demo):
+        url, path = demo
+        created = ingest(client, url, (path / "constraints.yaml").read_text()).json()
+        body = client.get(f"/manifest/{created['manifest_id']}/suggested-tasks").json()
+
+        # escalation_node: direct_assignable=false, entry_only_via=[refund_node, triage_node].
+        assert body["agents"]["escalation"]
+        assert all("reached indirectly" in s for s in body["agents"]["escalation"])
+
+    def test_unknown_manifest_id_404s_same_as_get_manifest(self, client):
+        assert client.get("/manifest/mf_does_not_exist/suggested-tasks").status_code == 404
+
+
 def test_healthz_reports_effective_settings(client):
     body = client.get("/healthz").json()
     assert body["status"] == "ok"

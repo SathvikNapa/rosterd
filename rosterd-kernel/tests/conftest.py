@@ -2,7 +2,7 @@
 
 Every test builds its own isolated Container (simulated docker backend --
 no real container, but every dispatch still forwards to a real HTTP demo
-agent double via fake_demo_agent below -- plus a StaticManifestSource
+agent double via fake_agent below -- plus a StaticManifestSource
 seeded in-process, no live ingestion/coordinator/Postgres needed) rather
 than sharing one module-level app, since the kernel is stateful across
 requests -- see adapters/http_in/app.py's module docstring.
@@ -114,18 +114,18 @@ class _HttpxStub:
 
 
 @pytest.fixture
-def fake_demo_agent(monkeypatch):
+def fake_agent(monkeypatch):
     """Default handler: always succeeds with no tool calls. Tests override
-    via `fake_demo_agent.handler = fn`."""
+    via `fake_agent.handler = fn`."""
 
     state = {"handler": lambda payload: FakeHttpxResponse(200, {"output": "ok", "tool_calls": []})}
 
     def _post(url, json=None, headers=None, timeout=None):  # noqa: A002
         return state["handler"](json)
 
-    from adapters.http_out import demo_agent_client
+    from adapters.http_out import agent_client
 
-    monkeypatch.setattr(demo_agent_client, "httpx", _HttpxStub(_post))
+    monkeypatch.setattr(agent_client, "httpx", _HttpxStub(_post))
 
     class Handle:
         def set(self, fn):
@@ -135,7 +135,7 @@ def fake_demo_agent(monkeypatch):
 
 
 @pytest.fixture
-def container(fake_demo_agent):
+def container(fake_agent):
     settings = make_settings()
     source = StaticManifestSource(make_manifest())
     return build_container(settings, manifest_source=source)

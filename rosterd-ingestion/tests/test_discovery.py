@@ -106,6 +106,30 @@ def test_falls_back_to_a_compile_assignment_without_langgraph_json(settings, mak
     assert result.agent_nodes == ["triage_node", "refund_node"]
 
 
+def test_a_module_level_re_compile_is_not_mistaken_for_a_graph(settings, make_repo):
+    """`PATTERN = re.compile(r"...")` matches the IDENTICAL `X = <expr>.compile(...)`
+    AST shape this tier looks for -- an extremely common real-world
+    pattern, confirmed to false-positive live (same class of bug as the
+    PEP 604 type-union fix for the `|` tier). `locate_graph` stops at the
+    first hit, so without rejecting this, a module with nothing but a
+    regex constant above the real agent code in file-scan order would
+    pre-empt it entirely."""
+    _, path = make_repo(
+        "regex-false-positive",
+        {
+            # Sorts before pipeline.py in locate_graph's alphabetical scan.
+            "constants.py": 'import re\n\nPATTERN = re.compile(r"[a-z]+")\n',
+            "pipeline.py": SIMPLE_AGENT,
+        },
+    )
+    assert discovery._compiled_assignments(path / "constants.py") == []
+
+    result = discovery.discover(path, settings)
+    assert "compile() assignment" in result.graph_attr
+    assert "pipeline.py" in result.graph_attr
+    assert result.agent_nodes == ["triage_node", "refund_node"]
+
+
 def test_a_plain_langchain_lcel_chain_is_discovered_with_no_langgraph_at_all(settings, make_repo):
     """Not every real repo is LangGraph: a plain LCEL chain (`a | b | c`,
     LangChain Core's own composition, used with no LangGraph import, no
@@ -144,6 +168,132 @@ def test_a_plain_langchain_lcel_chain_is_discovered_with_no_langgraph_at_all(set
         ("ChatPromptTemplate", "classify"),
         ("classify", "StrOutputParser"),
     }
+
+
+def test_a_pep604_type_union_is_not_mistaken_for_an_lcel_chain(settings, make_repo):
+    """`X = a | b | c` is also exactly how a PEP 604 type union/alias is
+    written -- identical AST shape to an LCEL pipe, no way to tell them
+    apart without importing (which this tier never does). Found live
+    against a real repo, mcp-use/mcp-use: a module-level
+    `LangChainToolResult = str | LangChainContentBlock | list[...]` type
+    alias was matched and returned as THE graph location -- before any
+    other file in the repo was even considered, since locate_graph stops
+    at the first hit -- then failed to import for reasons having nothing
+    to do with whether it was a real Runnable (it never could be; type
+    unions have no .get_graph()). Fixed by rejecting the clearest
+    type-expression shapes (a subscripted generic, a bare builtin type
+    name, `None`) before ever treating a `|` assignment as a candidate.
+    The real LCEL chain elsewhere in the repo must still be found."""
+    _, path = make_repo(
+        "type-union-false-positive",
+        {
+            # Sorts before pipeline.py, so locate_graph's directory walk
+            # would hit this FIRST if the fix didn't skip it.
+            "adapter.py": (
+                "LangChainToolResult = str | int | list[str]\n"
+                "OptionalThing = str | None\n"
+            ),
+            "pipeline.py": (
+                "from langchain_core.prompts import ChatPromptTemplate\n"
+                "from langchain_core.runnables import RunnableLambda\n"
+                "from langchain_core.output_parsers import StrOutputParser\n"
+                "\n"
+                "def classify(payload):\n"
+                "    return 'standard'\n"
+                "\n"
+                "real_chain = (\n"
+                "    ChatPromptTemplate.from_template('Classify: {text}')\n"
+                "    | RunnableLambda(classify)\n"
+                "    | StrOutputParser()\n"
+                ")\n"
+            ),
+        },
+    )
+    assert discovery._lcel_assignments(path / "adapter.py") == []
+
+    result = discovery.discover(path, settings)
+    assert "LCEL" in result.graph_attr
+    assert "pipeline.py" in result.graph_attr
+    assert result.agent_nodes == ["ChatPromptTemplate", "classify", "StrOutputParser"]
+
+
+class TestMultiCandidateRetry:
+    """Found live against a real repo, mcp-use/mcp-use: a module-level
+    `X = ClassA | ClassB | ...` type union (Python 3.10+'s `type.__or__`
+    makes this import cleanly -- no syntactic signal distinguishes it
+    from a real LCEL chain of custom Runnables, see
+    `_looks_like_a_type_expression`'s docstring) sorted before the repo's
+    real graph in file-scan order, and locate_graph committed to it as
+    THE candidate -- stopping the whole search before the real graph was
+    ever tried. Fixed: every tier-3/4 match is now a candidate, tried in
+    order until one actually works."""
+
+    def test_a_type_union_that_imports_cleanly_but_isnt_a_graph_falls_through_to_the_real_one(
+        self, settings, make_repo
+    ):
+        _, path = make_repo(
+            "type-union-imports-fine",
+            {
+                # Sorts before real_agent.py, so it's tried FIRST.
+                "fake_union.py": (
+                    "class A: pass\n"
+                    "class B: pass\n"
+                    "\n"
+                    "NotAGraph = A | B\n"  # imports fine (type.__or__); has no get_graph()
+                ),
+                "real_agent.py": SIMPLE_AGENT,
+            },
+        )
+        candidates = discovery.locate_graph_candidates(path, settings)
+        assert [c.attr for c in candidates] == ["NotAGraph", "graph"]
+
+        result = discovery.discover(path, settings)
+        assert result.mode == "import"
+        assert "real_agent.py" in result.graph_attr
+        assert result.agent_nodes == ["triage_node", "refund_node"]
+        assert any("NotAGraph" in w or "fake_union" in w for w in result.warnings)
+
+    def test_max_graph_candidates_caps_how_many_are_tried(self, settings, make_repo, monkeypatch):
+        """Same fixture as above, but capped to 1 candidate. Calling
+        _discover_via_import directly (not discover()) isolates the cap
+        itself from discover()'s OWN static-mode safety net, which would
+        otherwise find real_agent.py's nodes anyway via the whole-repo AST
+        scan regardless of how the import attempt went, masking whether
+        the cap actually did anything."""
+        monkeypatch.setenv("ROSTERD_MAX_GRAPH_CANDIDATES", "1")
+        from config import get_settings
+        from domain import astscan
+
+        _, path = make_repo(
+            "capped-retry",
+            {
+                "fake_union.py": "class A: pass\nclass B: pass\n\nNotAGraph = A | B\n",
+                "real_agent.py": SIMPLE_AGENT,
+            },
+        )
+        scan = astscan.scan_repo(path)
+        with pytest.raises(GraphLoadError, match="NotAGraph"):
+            discovery._discover_via_import(path, scan, get_settings(), [])
+
+    def test_an_explicit_langgraph_json_entry_never_falls_through_to_a_different_file(
+        self, settings, make_repo
+    ):
+        """Tiers 1-2 are authoritative, unlike tiers 3-4: an explicit
+        langgraph.json declaration that fails to import is a real error
+        about THAT repo's own stated entry point, not something to route
+        around by guessing at a different file -- even when a perfectly
+        good graph sits right next to it."""
+        _, path = make_repo(
+            "explicit-entry-fails",
+            {
+                "broken.py": "raise RuntimeError('boom at import time')\n",
+                "langgraph.json": '{"graphs": {"g": "./broken.py:graph"}}',
+                "real_agent.py": SIMPLE_AGENT,
+            },
+        )
+        candidates = discovery.locate_graph_candidates(path, settings)
+        assert len(candidates) == 1
+        assert "langgraph.json" in candidates[0].how
 
 
 def test_graph_spec_override_wins(settings, make_repo, monkeypatch):
@@ -309,9 +459,15 @@ class TestSandboxedInstallRetry:
         assert result.agent_nodes == ["triage_node", "refund_node"]
         assert any("sandboxed venv" in w for w in result.warnings)
 
-    def test_when_sandbox_finds_nothing_to_install_the_original_error_propagates(
+    def test_when_sandbox_finds_nothing_to_install_it_falls_back_to_static(
         self, settings, make_repo, monkeypatch
     ):
+        """Changed behavior: discover() used to propagate the import
+        failure directly here. Now -- same as the config.yaml-shaped
+        failure in TestStaticFallback below -- it falls back to the
+        static scan instead of failing the whole ingest outright, since
+        SIMPLE_AGENT has real, statically-discoverable nodes. The
+        original error is preserved as a warning, not swallowed."""
         _, path = make_repo(
             "needs-install-but-nothing-found",
             {
@@ -333,8 +489,11 @@ class TestSandboxedInstallRetry:
         monkeypatch.setattr(discovery, "_run_worker", fake_run_worker)
         monkeypatch.setattr(sandbox, "ensure_installed", lambda start, repo, settings_: None)
 
-        with pytest.raises(GraphLoadError, match="No module named 'nope'"):
-            discovery.discover(path, settings)
+        result = discovery.discover(path, settings)
+
+        assert result.mode == "static"
+        assert set(result.agent_nodes) == {"triage_node", "refund_node"}
+        assert any("No module named 'nope'" in w for w in result.warnings)
 
     def test_a_non_dependency_failure_never_triggers_a_sandboxed_install_attempt(
         self, settings, make_repo, monkeypatch
@@ -357,6 +516,77 @@ class TestSandboxedInstallRetry:
         with pytest.raises(GraphLoadError, match="boom at import time"):
             discovery.discover(path, settings)
         assert calls["ensure_installed"] == 0
+
+
+class TestStaticFallback:
+    """discover() falls back to the static scan already computed (not a
+    second pass -- `scan` is reused) when the runtime import fails for a
+    reason that isn't a missing Python dependency: a real public repo's
+    own required runtime config (an API key, a config.yaml it refuses to
+    start without), confirmed against a real one, bytedance/deer-flow.
+    Before this, that shape of failure meant the whole ingest failed
+    outright with graph_load_failed, even though the repo's nodes were
+    sitting right there in its own source, discoverable without ever
+    importing it."""
+
+    def test_a_config_file_shaped_failure_falls_back_to_a_usable_manifest(
+        self, settings, make_repo, monkeypatch
+    ):
+        _, path = make_repo(
+            "needs-its-own-config-file",
+            {
+                "agent.py": SIMPLE_AGENT,
+                "langgraph.json": '{"graphs": {"g": "./agent.py:graph"}}',
+            },
+        )
+
+        def fake_run_worker(location, settings_, *, python_executable=None, worker=None):
+            raise GraphLoadError(
+                "Importing the graph failed: FileNotFoundError: `config.yaml` "
+                "file not found in the project root",
+                traceback="FileNotFoundError: config.yaml",
+            )
+
+        monkeypatch.setattr(discovery, "_run_worker", fake_run_worker)
+
+        result = discovery.discover(path, settings)
+
+        assert result.mode == "static"
+        assert set(result.agent_nodes) == {"triage_node", "refund_node"}
+        # The real failure reason survives as a warning -- not swallowed,
+        # not replaced by a generic "fell back to static" message alone.
+        assert any("config.yaml" in w for w in result.warnings)
+        assert any("falling back to static" in w for w in result.warnings)
+        # Tools still come through the static pass, same as any other
+        # static-mode result -- this isn't a degraded, nodes-only shape.
+        assert result.nodes["refund_node"].tools == ["issue_refund"]
+
+    def test_a_config_file_shaped_failure_with_nothing_statically_discoverable_still_fails_honestly(
+        self, settings, make_repo, monkeypatch
+    ):
+        """The fallback is not a silent swallow: if static ALSO finds
+        nothing (no add_node() calls anywhere), the ORIGINAL import error
+        is what surfaces -- not static's own generic "nothing found"
+        message, which would mask what's actually wrong."""
+        _, path = make_repo(
+            "needs-its-own-config-file-and-has-no-static-nodes",
+            {
+                "agent.py": "graph = None  # never actually built\n",
+                "langgraph.json": '{"graphs": {"g": "./agent.py:graph"}}',
+            },
+        )
+
+        def fake_run_worker(location, settings_, *, python_executable=None, worker=None):
+            raise GraphLoadError(
+                "Importing the graph failed: FileNotFoundError: `config.yaml` "
+                "file not found in the project root",
+                traceback="FileNotFoundError: config.yaml",
+            )
+
+        monkeypatch.setattr(discovery, "_run_worker", fake_run_worker)
+
+        with pytest.raises(GraphLoadError, match="config.yaml"):
+            discovery.discover(path, settings)
 
 
 class TestPurposeDiscovery:
